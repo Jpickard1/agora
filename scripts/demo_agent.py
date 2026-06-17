@@ -30,10 +30,14 @@ def main():
     hub = HubClient(name=args.name, root=args.root)
     hub.register(capabilities=caps)
     hub.post("general", f"{args.name} online on {hub.host} (id={hub.id})")
+    hub.set_activity("idle, waiting for work")
     print(f"[{args.name}] registered as {hub.id}. Listening for instructions… Ctrl-C to quit.")
 
     def on_instruction(msg):
-        print(f"[{args.name}] 📨 instruction from {msg['author_name']}: {msg['text']}")
+        scope = "📢 broadcast" if msg.get("to") == "*" else "📨 direct"
+        print(f"[{args.name}] {scope} from {msg['author_name']}: {msg['text']}")
+        # Report that we're working on it (shows in the UI agent panel).
+        hub.set_activity(f"working on: {msg['text'][:40]}")
         # Acknowledge back on the channel so it shows in the UI.
         hub.post("general", f"{args.name} ack: '{msg['text']}'")
 

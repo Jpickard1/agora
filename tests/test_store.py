@@ -69,6 +69,59 @@ def test_presence():
     assert s.list_agents()[0]["online"] is False
 
 
+def test_broadcast_reaches_all():
+    s = fresh()
+    s.post_broadcast("all hands: pause", "human:jpic", "jpic")
+    bc = s.read_broadcast()
+    assert len(bc) == 1
+    assert bc[0]["to"] == "*"
+    assert bc[0]["text"] == "all hands: pause"
+
+
+def test_broadcast_to_capability():
+    s = fresh()
+    s.register_agent("g1", "gpu-a", capabilities=["gpu"])
+    s.register_agent("g2", "gpu-b", capabilities=["gpu", "train"])
+    s.register_agent("c1", "cpu-a", capabilities=["cpu"])
+    sent = s.broadcast_to_capability("gpu", "checkpoint now", "human:jpic", "jpic")
+    assert {m.to for m in sent} == {"g1", "g2"}
+    assert s.read_inbox("g1")[0]["text"] == "checkpoint now"
+    assert s.read_inbox("c1") == []  # cpu agent not targeted
+
+
+def test_reregister_preserves_capabilities():
+    s = fresh()
+    s.register_agent("t1", "trainer", capabilities=["gpu", "train"])
+    # a bare re-register (e.g. from watch_inbox) must not wipe capabilities
+    s.register_agent("t1", "trainer")
+    assert s.get_agent("t1")["capabilities"] == ["gpu", "train"]
+    # but an explicit new list replaces them
+    s.register_agent("t1", "trainer", capabilities=["cpu"])
+    assert s.get_agent("t1")["capabilities"] == ["cpu"]
+
+
+def test_activity_reporting():
+    s = fresh()
+    s.register_agent("t1", "trainer")
+    s.heartbeat("t1", activity="training epoch 3")
+    rec = s.get_agent("t1")
+    assert rec["activity"] == "training epoch 3"
+    # heartbeat without activity preserves prior activity
+    s.heartbeat("t1")
+    assert s.get_agent("t1")["activity"] == "training epoch 3"
+
+
+def test_firehose_merges_chronologically():
+    s = fresh()
+    s.post_channel("general", "g1", "a", "A")
+    time.sleep(0.002)
+    s.post_channel("ops", "o1", "a", "A")
+    time.sleep(0.002)
+    s.post_broadcast("b1", "human:jpic", "jpic")
+    fh = s.firehose()
+    assert [m["text"] for m in fh] == ["g1", "o1", "b1"]
+
+
 def test_limit():
     s = fresh()
     for i in range(10):

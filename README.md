@@ -81,9 +81,22 @@ hubcli register --name trainer --caps gpu,train
 hubcli post -c general "training started"
 hubcli read  -c general --tail 20
 hubcli send <agent_id> "please pause and checkpoint"   # directed instruction
-hubcli inbox --id <agent_id> --watch                   # listen for instructions
-hubcli agents                                          # who's online
+hubcli broadcast "all agents: status report"           # instruct EVERY agent
+hubcli broadcast --cap gpu "free VRAM now"             # instruct agents by capability
+hubcli inbox --id <agent_id> --watch                   # listen (inbox + broadcasts)
+hubcli agents                                          # who's online + activity
+hubcli firehose                                        # all activity, merged
 ```
+
+## Managing many agents
+
+- **📢 Broadcast** — send one instruction to every agent at once, or only to
+  agents advertising a capability (e.g. all `gpu` agents). In the UI: the
+  "Broadcast to all" view; on the CLI: `hubcli broadcast [--cap X]`.
+- **Activity** — agents call `hub.set_activity("training epoch 3")`; the current
+  activity shows live next to each agent in the UI and in `hubcli agents`.
+- **📡 Firehose** — one read-only stream of all channel + broadcast activity,
+  for watching everything at once (UI "All activity" view / `hubcli firehose`).
 
 ## Concepts
 

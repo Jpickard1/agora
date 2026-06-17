@@ -108,10 +108,13 @@ function handleEvent(data) {
   } else if (data.type === "message") {
     const m = data.message;
     if (state.view.type === "channel" && m.channel === state.view.id) appendMessage(m);
+    if (state.view.type === "firehose") appendMessage(m);
   } else if (data.type === "inbox") {
     const m = data.message;
     if (state.view.type === "agent" && m.to === state.view.id) appendMessage(m);
-    refreshChannels(); // surface any newly-seen agents in DM list
+  } else if (data.type === "broadcast") {
+    const m = data.message;
+    if (state.view.type === "broadcast" || state.view.type === "firehose") appendMessage(m);
   }
 }
 
@@ -150,6 +153,7 @@ function renderAgents() {
     li.innerHTML = `
       <div class="row1"><span class="pdot ${a.online ? "online" : ""}"></span><span class="aname">${esc(a.name)}</span></div>
       <div class="ameta">${esc(a.host || "")} · ${a.online ? "online" : rel(a.age)}</div>
+      ${a.activity ? `<div class="ameta" style="font-style:italic">▸ ${esc(a.activity)}</div>` : ""}
       ${caps ? `<div class="caps">${esc(caps)}</div>` : ""}`;
     li.title = "Click to send a direct instruction";
     li.onclick = () => selectView({ type: "agent", id: a.id, name: a.name });
@@ -179,20 +183,30 @@ async function selectView(view) {
   renderDmList();
 
   const composer = $("#composer");
+  composer.classList.remove("instruct");
+  composer.style.display = "flex";
   if (view.type === "channel") {
     $("#view-title").textContent = "# " + view.id;
     $("#view-sub").textContent = "broadcast channel — every agent can read & post";
     $("#msg-input").placeholder = `Message #${view.id}`;
-    composer.classList.remove("instruct");
-    const msgs = await api(`/api/channels/${encodeURIComponent(view.id)}/messages?limit=200`);
-    renderMessages(msgs);
-  } else {
+    renderMessages(await api(`/api/channels/${encodeURIComponent(view.id)}/messages?limit=200`));
+  } else if (view.type === "agent") {
     $("#view-title").textContent = "🧑→🤖 " + (view.name || view.id);
     $("#view-sub").textContent = "direct instructions to " + view.id;
     $("#msg-input").placeholder = `Instruct ${view.name || view.id}…`;
     composer.classList.add("instruct");
-    const msgs = await api(`/api/agents/${encodeURIComponent(view.id)}/inbox?limit=200`);
-    renderMessages(msgs);
+    renderMessages(await api(`/api/agents/${encodeURIComponent(view.id)}/inbox?limit=200`));
+  } else if (view.type === "firehose") {
+    $("#view-title").textContent = "📡 All activity";
+    $("#view-sub").textContent = "every channel + broadcast, merged — read-only";
+    composer.style.display = "none";
+    renderMessages(await api(`/api/firehose?limit=300`));
+  } else if (view.type === "broadcast") {
+    $("#view-title").textContent = "📢 Broadcast to all agents";
+    $("#view-sub").textContent = "instruction delivered to every agent (now and future)";
+    $("#msg-input").placeholder = "Instruct ALL agents…";
+    composer.classList.add("instruct");
+    renderMessages(await api(`/api/broadcast?limit=200`));
   }
 }
 
@@ -248,16 +262,20 @@ $("#composer").addEventListener("submit", async (e) => {
   const body = JSON.stringify({ text, author_name: state.name });
   try {
     if (state.view.type === "channel") {
-      const m = await api(`/api/channels/${encodeURIComponent(state.view.id)}/messages`, { method: "POST", body });
-      appendMessage(m);
-    } else {
-      const m = await api(`/api/agents/${encodeURIComponent(state.view.id)}/inbox`, { method: "POST", body });
-      appendMessage(m);
+      appendMessage(await api(`/api/channels/${encodeURIComponent(state.view.id)}/messages`, { method: "POST", body }));
+    } else if (state.view.type === "agent") {
+      appendMessage(await api(`/api/agents/${encodeURIComponent(state.view.id)}/inbox`, { method: "POST", body }));
+    } else if (state.view.type === "broadcast") {
+      const r = await api(`/api/broadcast`, { method: "POST", body });
+      if (r && r.id) appendMessage(r);
     }
   } catch (err) {
     input.value = text; // restore on failure
   }
 });
+
+$("#nav-firehose").onclick = () => selectView({ type: "firehose" });
+$("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 
 $("#add-channel").onclick = async () => {
   const name = prompt("New channel name:");

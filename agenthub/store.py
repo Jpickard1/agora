@@ -108,13 +108,15 @@ class HubStore:
         self.channels_dir = self.root / "channels"
         self.inbox_dir = self.root / "inbox"
         self.agents_dir = self.root / "agents"
+        self.broadcast_dir = self.root / "broadcast"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
 
     def init(self, token: str | None = None) -> dict[str, Any]:
         """Create the hub directory tree and config if missing. Idempotent."""
-        for d in (self.channels_dir, self.inbox_dir, self.agents_dir):
+        for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
+                  self.broadcast_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -193,6 +195,39 @@ class HubStore:
         _atomic_write_json(path, msg.to_dict())
         return msg
 
+    def post_broadcast(self, text: str, author: str, author_name: str,
+                       author_kind: str = "human", host: str = "",
+                       meta: dict | None = None) -> Message:
+        """Send one instruction to *every* agent. Agents poll the broadcast
+        stream in addition to their own inbox, so this reaches agents that
+        register later too."""
+        ts = _now()
+        msg = Message(
+            id=uuid.uuid4().hex, ts=ts, text=text, author=author,
+            author_name=author_name, author_kind=author_kind,
+            to="*", host=host, meta=meta or {},
+        )
+        path = self.broadcast_dir / _msg_filename(ts)
+        _atomic_write_json(path, msg.to_dict())
+        return msg
+
+    def broadcast_to_capability(self, capability: str, text: str, author: str,
+                                author_name: str, author_kind: str = "human",
+                                host: str = "", online_only: bool = False
+                                ) -> list[Message]:
+        """Send a directed instruction to every agent advertising a capability.
+        Writes to each matching agent's inbox so it is individually addressed."""
+        sent = []
+        for a in self.list_agents(online_window=30.0):
+            if online_only and not a.get("online"):
+                continue
+            if capability in (a.get("capabilities") or []):
+                sent.append(self.post_inbox(
+                    a["id"], text, author=author, author_name=author_name,
+                    author_kind=author_kind, host=host,
+                    meta={"capability": capability}))
+        return sent
+
     # -- reading -----------------------------------------------------------
 
     def _read_dir_messages(self, msg_dir: Path, since_ts: float = 0.0,
@@ -227,6 +262,21 @@ class HubStore:
         to_id = _safe_name(agent_id)
         return self._read_dir_messages(self.inbox_dir / to_id, since_ts, limit)
 
+    def read_broadcast(self, since_ts: float = 0.0,
+                       limit: int | None = None) -> list[dict[str, Any]]:
+        return self._read_dir_messages(self.broadcast_dir, since_ts, limit)
+
+    def firehose(self, since_ts: float = 0.0, limit: int = 200
+                 ) -> list[dict[str, Any]]:
+        """All channel + broadcast activity merged chronologically. The
+        management 'see everything' view."""
+        merged: list[dict[str, Any]] = []
+        for ch in self.list_channels():
+            merged.extend(self.read_channel(ch["name"], since_ts=since_ts))
+        merged.extend(self.read_broadcast(since_ts=since_ts))
+        merged.sort(key=lambda m: m["ts"])
+        return merged[-limit:] if limit else merged
+
     # -- agents / presence -------------------------------------------------
 
     def register_agent(self, agent_id: str, name: str, host: str = "",
@@ -242,8 +292,11 @@ class HubStore:
             "host": host,
             "pid": pid,
             "kind": kind,
-            "capabilities": capabilities or [],
+            # Preserve previously-declared capabilities on a bare re-register.
+            "capabilities": capabilities if capabilities is not None
+                            else existing.get("capabilities", []),
             "status": "online",
+            "activity": existing.get("activity", ""),
             "registered": existing.get("registered", now),
             "last_seen": now,
             "extra": extra or existing.get("extra", {}),
@@ -251,7 +304,8 @@ class HubStore:
         _atomic_write_json(self.agents_dir / f"{aid}.json", record)
         return record
 
-    def heartbeat(self, agent_id: str, status: str = "online") -> dict[str, Any] | None:
+    def heartbeat(self, agent_id: str, status: str = "online",
+                  activity: str | None = None) -> dict[str, Any] | None:
         aid = _safe_name(agent_id)
         path = self.agents_dir / f"{aid}.json"
         record = _read_json(path)
@@ -259,6 +313,8 @@ class HubStore:
             return None
         record["last_seen"] = _now()
         record["status"] = status
+        if activity is not None:
+            record["activity"] = activity
         _atomic_write_json(path, record)
         return record
 

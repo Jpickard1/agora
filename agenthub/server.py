@@ -95,6 +95,43 @@ def create_app(root: str | Path) -> FastAPI:
             host=payload.get("host", "web"))
         return m.to_dict()
 
+    # -- firehose: all activity merged -----------------------------------
+    @app.get("/api/firehose")
+    def firehose(since: float = 0.0, limit: int = 200,
+                 x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.firehose(since_ts=since, limit=limit)
+
+    # -- broadcast: one instruction to all (or by capability) ------------
+    @app.get("/api/broadcast")
+    def read_broadcast(since: float = 0.0, limit: int = 200,
+                       x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.read_broadcast(since_ts=since, limit=limit)
+
+    @app.post("/api/broadcast")
+    def post_broadcast(payload: dict = Body(...),
+                       x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        text = (payload.get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "text required")
+        name = payload.get("author_name") or "human"
+        author = payload.get("author") or f"human:{name}"
+        capability = (payload.get("capability") or "").strip()
+        if capability:
+            sent = store.broadcast_to_capability(
+                capability, text, author=author, author_name=name,
+                author_kind=payload.get("author_kind", "human"), host="web",
+                online_only=bool(payload.get("online_only")))
+            return {"targeted_capability": capability,
+                    "delivered": len(sent),
+                    "agents": [m.to for m in sent]}
+        m = store.post_broadcast(
+            text, author=author, author_name=name,
+            author_kind=payload.get("author_kind", "human"), host="web")
+        return m.to_dict()
+
     # -- agents + directed instructions ----------------------------------
     @app.get("/api/agents")
     def agents(window: float = 30.0, x_hub_token: str | None = Header(default=None)):
@@ -134,6 +171,7 @@ def create_app(root: str | Path) -> FastAPI:
             start = time.time()
             cursors: dict[str, float] = {}
             inbox_cursors: dict[str, float] = {}
+            broadcast_cursor = start
             yield _sse({"type": "hello", "ts": start})
             while True:
                 if await request.is_disconnected():
@@ -153,6 +191,10 @@ def create_app(root: str | Path) -> FastAPI:
                         for m in store.read_inbox(aid, since_ts=since):
                             inbox_cursors[aid] = max(inbox_cursors.get(aid, start), m["ts"])
                             yield _sse({"type": "inbox", "message": m})
+                    # New broadcasts (instructions to all agents).
+                    for m in store.read_broadcast(since_ts=broadcast_cursor):
+                        broadcast_cursor = max(broadcast_cursor, m["ts"])
+                        yield _sse({"type": "broadcast", "message": m})
                     # Presence snapshot.
                     yield _sse({"type": "agents", "agents": store.list_agents()})
                 except Exception as e:  # never kill the stream on a transient FS error

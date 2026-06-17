@@ -105,10 +105,44 @@ tests/test_store.py     store unit tests
 - ✅ Token auth enforced on REST + SSE; disabled cleanly when no token set.
 - ✅ Live SSE event stream pushes new messages and presence snapshots to the UI.
 
+## Iteration 2 — management features
+
+Focused on the "manage all my agents together" requirement.
+
+### Added
+- **Broadcast instructions** (`post_broadcast`) — one directive to *every*
+  agent via a `broadcast/` dir that all clients poll alongside their inbox, so
+  it reaches agents that register later too. Marked `to: "*"`.
+- **Capability-targeted instructions** (`broadcast_to_capability`) — address
+  every agent advertising a capability (e.g. all `gpu` agents), with optional
+  `online_only`. Writes to each matching agent's inbox.
+- **Agent activity reporting** — agents call `set_activity("training epoch 3")`;
+  shown live in the UI agent panel. `heartbeat(activity=…)` updates it; a bare
+  heartbeat preserves the prior value.
+- **Firehose** (`firehose`) — all channels + broadcasts merged chronologically;
+  exposed at `/api/firehose` and as a read-only "📡 All activity" view in the UI.
+- UI: "📢 Broadcast to all" composer view + per-agent activity line.
+- CLI: `hubcli broadcast [--cap X [--online-only]]` and `hubcli firehose`;
+  `hubcli inbox --watch` now also surfaces broadcasts (`--no-broadcast` to opt out).
+- SSE stream now emits `broadcast` events.
+
+### Bug found & fixed (regression-tested)
+`watch_inbox()` re-registers the agent with no args, which **wiped declared
+capabilities** (`capabilities or []` → `[]`). Fixed `register_agent` to preserve
+existing capabilities on a bare re-register; added
+`test_reregister_preserves_capabilities`. Confirmed live: a `--cap gpu` broadcast
+now reaches only the gpu agent.
+
+### Verified
+- Store tests: **11/11 passing** (added broadcast-all, capability-targeting,
+  activity, firehose-ordering, capability-preservation).
+- Live HTTP: broadcast-to-all acked by all agents; gpu-only broadcast delivered
+  to exactly the gpu agent; firehose merges channel+broadcast in time order;
+  agent activity visible via `/api/agents`.
+
 ## Possible next steps (not yet built)
 
 - Threaded replies / reactions.
 - Message retention/rotation (archive old per-channel files).
 - Agent-to-agent request/response correlation IDs.
 - Optional per-agent tokens for auditing (auth model is pluggable in `server.py`).
-- A read-only "firehose" channel aggregating all activity.

@@ -41,7 +41,9 @@ class HubClient:
         self.id = agent_id or default_agent_id(self.name)
         self.host = socket.gethostname().split(".")[0]
         self.kind = kind
-        self._inbox_cursor = time.time()  # only see instructions sent after we start
+        # only see instructions/broadcasts sent after we start
+        self._inbox_cursor = time.time()
+        self._broadcast_cursor = time.time()
 
     # -- identity ----------------------------------------------------------
 
@@ -51,8 +53,13 @@ class HubClient:
             self.id, self.name, host=self.host, pid=os.getpid(),
             kind=self.kind, capabilities=capabilities, extra=extra)
 
-    def heartbeat(self, status: str = "online") -> dict[str, Any] | None:
-        return self.store.heartbeat(self.id, status=status)
+    def heartbeat(self, status: str = "online",
+                  activity: str | None = None) -> dict[str, Any] | None:
+        return self.store.heartbeat(self.id, status=status, activity=activity)
+
+    def set_activity(self, activity: str) -> dict[str, Any] | None:
+        """Report what this agent is currently doing (shown in the UI)."""
+        return self.store.heartbeat(self.id, activity=activity)
 
     def goodbye(self) -> None:
         self.store.set_agent_status(self.id, "offline")
@@ -68,6 +75,12 @@ class HubClient:
         """Send a directed message/instruction to another agent's inbox."""
         return self.store.post_inbox(
             agent_id, text, author=self.id, author_name=self.name,
+            author_kind=self.kind, host=self.host, meta=meta)
+
+    def broadcast(self, text: str, meta: dict | None = None):
+        """Send an instruction to every agent (now and future)."""
+        return self.store.post_broadcast(
+            text, author=self.id, author_name=self.name,
             author_kind=self.kind, host=self.host, meta=meta)
 
     # -- reading -----------------------------------------------------------
@@ -86,11 +99,17 @@ class HubClient:
 
     # -- convenience polling ----------------------------------------------
 
-    def poll_inbox(self) -> list[dict[str, Any]]:
-        """Return inbox messages received since the last poll (or since start)."""
+    def poll_inbox(self, include_broadcast: bool = True) -> list[dict[str, Any]]:
+        """Return new instructions since the last poll: directed messages to
+        this agent, plus broadcasts to all agents (chronologically merged)."""
         msgs = self.store.read_inbox(self.id, since_ts=self._inbox_cursor)
         if msgs:
             self._inbox_cursor = max(m["ts"] for m in msgs)
+        if include_broadcast:
+            bc = self.store.read_broadcast(since_ts=self._broadcast_cursor)
+            if bc:
+                self._broadcast_cursor = max(m["ts"] for m in bc)
+            msgs = sorted(msgs + bc, key=lambda m: m["ts"])
         return msgs
 
     def watch_inbox(self, on_message: Callable[[dict[str, Any]], Any],

@@ -101,6 +101,41 @@ def cmd_send(args):
     print(f"Sent instruction to @{m.to} ({m.id[:8]})")
 
 
+def cmd_broadcast(args):
+    store = _store(args)
+    text = args.text if args.text is not None else sys.stdin.read().strip()
+    if not text:
+        print("Nothing to broadcast (empty text).", file=sys.stderr)
+        sys.exit(1)
+    name = args.author or "human:cli"
+    if args.cap:
+        sent = store.broadcast_to_capability(
+            args.cap, text, author=args.id or name, author_name=name,
+            author_kind=args.kind, host=socket.gethostname().split(".")[0],
+            online_only=args.online_only)
+        print(f"Delivered to {len(sent)} agent(s) with capability '{args.cap}':")
+        for m in sent:
+            print(f"  → @{m.to}")
+    else:
+        m = store.post_broadcast(text, author=args.id or name, author_name=name,
+                                 author_kind=args.kind,
+                                 host=socket.gethostname().split(".")[0])
+        print(f"Broadcast to all agents ({m.id[:8]})")
+
+
+def cmd_firehose(args):
+    store = _store(args)
+    msgs = store.firehose(limit=args.tail or 200)
+    if args.json:
+        print(json.dumps(msgs, indent=2))
+        return
+    if not msgs:
+        print("(no activity yet)")
+    for m in msgs:
+        where = f"#{m['channel']}" if m.get("channel") else ("→all" if m.get("to") == "*" else "")
+        print(f"[{_fmt_ts(m['ts'])}] {where:12} {m.get('author_name')}: {m['text']}")
+
+
 def cmd_read(args):
     store = _store(args)
     limit = args.tail if args.tail else None
@@ -122,13 +157,17 @@ def cmd_inbox(args):
     if args.watch:
         print(f"Watching inbox for {args.id} (Ctrl-C to stop)…")
         cursor = time.time() if not args.all else 0.0
+        bcursor = cursor
         try:
             while True:
                 if not args.no_heartbeat:
                     store.heartbeat(args.id)
                 msgs = store.read_inbox(args.id, since_ts=cursor)
-                for m in msgs:
-                    cursor = max(cursor, m["ts"])
+                bc = [] if args.no_broadcast else store.read_broadcast(since_ts=bcursor)
+                for m in sorted(msgs + bc, key=lambda x: x["ts"]):
+                    cursor = max(cursor, m["ts"]) if m.get("to") != "*" else cursor
+                    if m.get("to") == "*":
+                        bcursor = max(bcursor, m["ts"])
                     _print_msg(m)
                 time.sleep(args.interval)
         except KeyboardInterrupt:
@@ -219,6 +258,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--kind", default="human")
     sp.set_defaults(func=cmd_send)
 
+    sp = sub.add_parser("broadcast", help="Send an instruction to ALL agents (or by capability)")
+    sp.add_argument("text", nargs="?", help="Message text (or stdin)")
+    sp.add_argument("--cap", help="Only agents advertising this capability")
+    sp.add_argument("--online-only", action="store_true", help="With --cap, only online agents")
+    sp.add_argument("--author", help="Display name")
+    sp.add_argument("--id", help="Author id")
+    sp.add_argument("--kind", default="human")
+    sp.set_defaults(func=cmd_broadcast)
+
+    sp = sub.add_parser("firehose", help="Show all channel + broadcast activity merged")
+    sp.add_argument("--tail", type=int, help="Only the last N items")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_firehose)
+
     sp = sub.add_parser("read", help="Read a channel")
     sp.add_argument("-c", "--channel", default="general")
     sp.add_argument("--tail", type=int, help="Only the last N messages")
@@ -231,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all", action="store_true", help="When watching, include history")
     sp.add_argument("--interval", type=float, default=2.0)
     sp.add_argument("--no-heartbeat", action="store_true")
+    sp.add_argument("--no-broadcast", action="store_true", help="Ignore broadcasts to all agents")
     sp.add_argument("--tail", type=int)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_inbox)
