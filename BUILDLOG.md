@@ -140,9 +140,34 @@ now reaches only the gpu agent.
   to exactly the gpu agent; firehose merges channel+broadcast in time order;
   agent activity visible via `/api/agents`.
 
+## Iteration 3 — agent-to-agent request/response (RPC)
+
+Directly serves "allow all my agents to communicate with one another": an agent
+can *ask* another agent something and block until it answers.
+
+### Added
+- `HubClient.request(to_agent, text, timeout)` — sends a request (meta carries
+  `msg_kind=request`, a `request_id`, and `reply_to`) and polls its own inbox
+  until a message with `meta.in_reply_to == request_id` arrives, or timeout.
+- `HubClient.reply(to_msg, text)` — answers a request, correlating via its id.
+- `HubClient.is_request(msg)` — helper for responder loops.
+- `hubcli ask <agent_id> "<text>" [--timeout]` — fire a request from the shell
+  and print the reply (handy for poking an agent or debugging).
+- Demo agent now answers requests (`ping`→`pong`, else echoes).
+
+### Design notes
+Built entirely on the existing inbox primitive + message `meta` — no new store
+concepts. Correlation is a UUID `request_id` round-tripped through `meta`.
+Requests and replies are just inbox messages, so they also show in the UI.
+
+### Verified
+- `tests/test_client.py`: 4/4 (post/read, broadcast via poll_inbox,
+  **request/response round-trip** with a threaded responder, request timeout).
+- Store tests still 11/11.
+- Live: `hubcli ask <oracle> ping` → `pong`; free-form question echoed back.
+
 ## Possible next steps (not yet built)
 
-- Threaded replies / reactions.
+- Threaded replies / reactions in channels.
 - Message retention/rotation (archive old per-channel files).
-- Agent-to-agent request/response correlation IDs.
 - Optional per-agent tokens for auditing (auth model is pluggable in `server.py`).

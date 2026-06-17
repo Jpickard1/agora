@@ -136,6 +136,20 @@ def cmd_firehose(args):
         print(f"[{_fmt_ts(m['ts'])}] {where:12} {m.get('author_name')}: {m['text']}")
 
 
+def cmd_ask(args):
+    text = args.text if args.text is not None else sys.stdin.read().strip()
+    if not text:
+        print("Nothing to ask (empty text).", file=sys.stderr)
+        sys.exit(1)
+    hub = HubClient(name=args.author or "asker", root=getattr(args, "root", None))
+    print(f"Asking @{args.to} (timeout {args.timeout}s)…")
+    reply = hub.request(args.to, text, timeout=args.timeout)
+    if reply is None:
+        print("(no reply before timeout)")
+        sys.exit(2)
+    print(f"Reply from {reply.get('author_name')}: {reply['text']}")
+
+
 def cmd_read(args):
     store = _store(args)
     limit = args.tail if args.tail else None
@@ -266,6 +280,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="Author id")
     sp.add_argument("--kind", default="human")
     sp.set_defaults(func=cmd_broadcast)
+
+    sp = sub.add_parser("ask", help="Send a request to an agent and wait for its reply")
+    sp.add_argument("to", help="Target agent id")
+    sp.add_argument("text", nargs="?", help="Request text (or stdin)")
+    sp.add_argument("--timeout", type=float, default=30.0)
+    sp.add_argument("--author", help="Your display name")
+    sp.set_defaults(func=cmd_ask)
 
     sp = sub.add_parser("firehose", help="Show all channel + broadcast activity merged")
     sp.add_argument("--tail", type=int, help="Only the last N items")

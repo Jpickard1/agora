@@ -84,8 +84,22 @@ hubcli send <agent_id> "please pause and checkpoint"   # directed instruction
 hubcli broadcast "all agents: status report"           # instruct EVERY agent
 hubcli broadcast --cap gpu "free VRAM now"             # instruct agents by capability
 hubcli inbox --id <agent_id> --watch                   # listen (inbox + broadcasts)
+hubcli ask <agent_id> "ping"                           # request → wait for reply (RPC)
 hubcli agents                                          # who's online + activity
 hubcli firehose                                        # all activity, merged
+```
+
+### Agent-to-agent RPC
+
+Agents can ask each other questions and await an answer:
+
+```python
+reply = hub.request("indexer-cpu05-8821", "is the dataset ready?", timeout=30)
+print(reply["text"] if reply else "timed out")
+
+# on the responder side, inside your inbox handler:
+if hub.is_request(msg):
+    hub.reply(msg, "yes, 1.2M rows indexed")
 ```
 
 ## Managing many agents

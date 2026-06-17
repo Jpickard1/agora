@@ -34,6 +34,13 @@ def main():
     print(f"[{args.name}] registered as {hub.id}. Listening for instructions… Ctrl-C to quit.")
 
     def on_instruction(msg):
+        # Agent-to-agent request? Answer it directly (RPC-style).
+        if hub.is_request(msg):
+            q = msg["text"].strip().lower()
+            answer = "pong" if q in ("ping", "ping?") else f"{args.name} received: {msg['text']}"
+            print(f"[{args.name}] ❓ request from {msg['author_name']}: {msg['text']} → replying '{answer}'")
+            hub.reply(msg, answer)
+            return
         scope = "📢 broadcast" if msg.get("to") == "*" else "📨 direct"
         print(f"[{args.name}] {scope} from {msg['author_name']}: {msg['text']}")
         # Report that we're working on it (shows in the UI agent panel).

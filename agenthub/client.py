@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import socket
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -82,6 +83,43 @@ class HubClient:
         return self.store.post_broadcast(
             text, author=self.id, author_name=self.name,
             author_kind=self.kind, host=self.host, meta=meta)
+
+    # -- request / response (agent-to-agent RPC) --------------------------
+
+    @staticmethod
+    def is_request(msg: dict[str, Any]) -> bool:
+        return (msg.get("meta") or {}).get("msg_kind") == "request"
+
+    def request(self, to_agent: str, text: str, timeout: float = 30.0,
+                poll: float = 0.5, meta: dict | None = None
+                ) -> dict[str, Any] | None:
+        """Send a request to another agent and block until it replies (or
+        timeout). Returns the reply message, or None on timeout. Correlation is
+        by a request_id carried in message meta."""
+        rid = uuid.uuid4().hex
+        m = dict(meta or {})
+        m.update({"msg_kind": "request", "request_id": rid, "reply_to": self.id})
+        sent = self.send_to(to_agent, text, meta=m)
+        deadline = time.time() + timeout
+        seen: set[str] = set()
+        while time.time() < deadline:
+            for r in self.store.read_inbox(self.id, since_ts=sent.ts - 0.001):
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                if (r.get("meta") or {}).get("in_reply_to") == rid:
+                    return r
+            time.sleep(poll)
+        return None
+
+    def reply(self, to_msg: dict[str, Any], text: str, meta: dict | None = None):
+        """Reply to a request message (correlates via its request_id)."""
+        rmeta = to_msg.get("meta") or {}
+        rid = rmeta.get("request_id")
+        target = rmeta.get("reply_to") or to_msg.get("author")
+        m = dict(meta or {})
+        m.update({"msg_kind": "reply", "in_reply_to": rid})
+        return self.send_to(target, text, meta=m)
 
     # -- reading -----------------------------------------------------------
 
