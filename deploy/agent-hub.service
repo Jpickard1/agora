@@ -1,0 +1,24 @@
+# Reference systemd unit for the Agent Hub web server.
+#
+# Generate a filled-in copy automatically with:
+#   hubcli install-service            # writes a --user unit
+#   hubcli install-service --system   # writes a system unit (needs root)
+#   hubcli install-service --print-only
+#
+# Or copy this file, edit the paths, and install it manually.
+
+[Unit]
+Description=Agent Hub server
+After=network.target
+
+[Service]
+Type=simple
+# The shared-filesystem hub root (must be visible to this host):
+Environment=AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+# Use the python that has agent-hub installed (e.g. your conda/venv python):
+ExecStart=/usr/bin/env python -m agenthub.cli serve --host 0.0.0.0 --port 8787
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

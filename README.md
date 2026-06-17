@@ -149,8 +149,34 @@ Or let the **server auto-prune** by adding a `retention` block to
 
 See [`BUILDLOG.md`](BUILDLOG.md) for the design decisions and build history.
 
+## Deployment
+
+Run the server persistently as a systemd service (so the UI is always up):
+
+```bash
+hubcli install-service --port 8787      # writes ~/.config/systemd/user/agent-hub.service
+systemctl --user daemon-reload && systemctl --user enable --now agent-hub
+loginctl enable-linger $USER            # keep it running after logout
+# (use --system for a root-level unit; see deploy/agent-hub.service for a template)
+```
+
+On every server your agents run, just export the hub root + token (e.g. in
+`~/.bashrc`) and they can connect:
+
+```bash
+export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+export AGENT_HUB_TOKEN=<token>
+```
+
+Check health any time:
+
+```bash
+hubcli doctor          # channels, message counts, online agents, retention policy
+```
+
 ## Tests
 
 ```bash
 python tests/test_store.py        # or: python -m pytest tests/ -q
+python tests/test_client.py
 ```

@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 from .config import resolve_root, resolve_token, write_pointer
 from .store import HubStore
@@ -255,6 +257,75 @@ def cmd_mkchannel(args):
     print(f"Channel ready: #{name}")
 
 
+def cmd_doctor(args):
+    root = resolve_root(args.root)
+    store = HubStore(root)
+    if not store.config_path.exists():
+        print(f"✗ No hub found at {root}")
+        print(f"  Run:  hubcli init --root {root}")
+        sys.exit(1)
+    s = store.stats()
+    print(f"✓ Hub at {s['root']}")
+    print(f"  config:           {'ok' if s['config_ok'] else 'MISSING'}")
+    print(f"  auth:             {'shared token set' if s['auth_enabled'] else 'disabled'}")
+    print(f"  channels:         {s['channels']} ({s['channel_messages_total']} messages)")
+    for name, n in s["channel_message_counts"].items():
+        print(f"      #{name}: {n}")
+    print(f"  broadcasts:       {s['broadcast_messages']}")
+    print(f"  inbox messages:   {s['inbox_messages_total']}")
+    print(f"  agents:           {s['agents_online']} online / {s['agents_total']} total")
+    ret = (store.get_config() or {}).get("retention") or {}
+    if ret.get("keep_last") or ret.get("max_age_days"):
+        print(f"  retention:        keep_last={ret.get('keep_last')}, "
+              f"max_age_days={ret.get('max_age_days')}, every {ret.get('interval_sec')}s")
+    else:
+        print("  retention:        off (set a `retention` block in config.json to enable)")
+    if args.json:
+        print(json.dumps(s, indent=2))
+
+
+SERVICE_TEMPLATE = """\
+[Unit]
+Description=Agent Hub server ({root})
+After=network.target
+
+[Service]
+Type=simple
+Environment=AGENT_HUB_ROOT={root}
+ExecStart={python} -m agenthub.cli serve --host {host} --port {port}
+WorkingDirectory={workdir}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def cmd_install_service(args):
+    root = resolve_root(args.root)
+    unit = SERVICE_TEMPLATE.format(
+        root=root, python=sys.executable, host=args.host, port=args.port,
+        workdir=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    if args.system:
+        dest = Path("/etc/systemd/system/agent-hub.service")
+        enable_cmd = "sudo systemctl daemon-reload && sudo systemctl enable --now agent-hub"
+    else:
+        dest = Path("~/.config/systemd/user/agent-hub.service").expanduser()
+        enable_cmd = ("systemctl --user daemon-reload && "
+                      "systemctl --user enable --now agent-hub")
+    if args.print_only:
+        print(unit)
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(unit, encoding="utf-8")
+    print(f"Wrote systemd unit: {dest}\n")
+    print("Enable and start it with:")
+    print(f"  {enable_cmd}")
+    if not args.system:
+        print("\nTip: `loginctl enable-linger $USER` keeps it running after you log out.")
+
+
 def cmd_serve(args):
     # Imported lazily so the CLI works without FastAPI installed.
     from .server import run_server
@@ -360,6 +431,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8787)
     sp.set_defaults(func=cmd_serve)
+
+    sp = sub.add_parser("doctor", help="Health check: hub status, counts, presence")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("install-service", help="Generate a systemd unit for the server")
+    sp.add_argument("--host", default="0.0.0.0")
+    sp.add_argument("--port", type=int, default=8787)
+    sp.add_argument("--system", action="store_true", help="System unit (needs root) instead of --user")
+    sp.add_argument("--print-only", action="store_true", help="Print the unit, don't write it")
+    sp.set_defaults(func=cmd_install_service)
 
     return p
 

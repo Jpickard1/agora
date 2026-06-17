@@ -388,6 +388,38 @@ class HubStore:
                     continue
         return out[-limit:] if limit else out
 
+    # -- diagnostics -------------------------------------------------------
+
+    def stats(self, online_window: float = 30.0) -> dict[str, Any]:
+        """A health snapshot of the hub (used by `hubcli doctor`)."""
+        def _count(d: Path) -> int:
+            if not d.exists():
+                return 0
+            return sum(1 for n in os.listdir(d)
+                       if n.endswith(".json") and not n.startswith("."))
+
+        channels = self.list_channels()
+        ch_counts = {c["name"]: _count(self.channels_dir / c["name"] / "messages")
+                     for c in channels}
+        agents = self.list_agents(online_window=online_window)
+        inbox_total = 0
+        if self.inbox_dir.exists():
+            for idir in self.inbox_dir.iterdir():
+                if idir.is_dir():
+                    inbox_total += _count(idir)
+        return {
+            "root": str(self.root),
+            "config_ok": self.get_config() is not None,
+            "auth_enabled": bool(self.token),
+            "channels": len(channels),
+            "channel_message_counts": ch_counts,
+            "channel_messages_total": sum(ch_counts.values()),
+            "broadcast_messages": _count(self.broadcast_dir),
+            "inbox_messages_total": inbox_total,
+            "agents_total": len(agents),
+            "agents_online": sum(1 for a in agents if a.get("online")),
+        }
+
     # -- agents / presence -------------------------------------------------
 
     def register_agent(self, agent_id: str, name: str, host: str = "",

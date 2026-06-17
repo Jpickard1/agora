@@ -195,8 +195,27 @@ at exactly 2 messages across many cycles, no churn.
 - Live: `hubcli prune --keep-last 3` kept the 3 newest and archived 5; server
   auto-pruner settled the channel at `keep_last` with no feedback loop.
 
+## Iteration 5 — deployment + health check
+
+Make the hub real-world deployable across servers and observable.
+
+### Added
+- `store.stats()` — health snapshot: per-channel message counts, broadcast/inbox
+  totals, agent online/total, auth + config status.
+- `hubcli doctor` — prints that snapshot (`--json` for machine output); tells you
+  how to `init` if no hub is found and shows the active retention policy.
+- `hubcli install-service` — generates a systemd unit (filled with the resolved
+  hub root and the actual python interpreter). `--user` (default) writes to
+  `~/.config/systemd/user/`; `--system` for a root unit; `--print-only` to dump.
+- `deploy/agent-hub.service` — a checked-in reference unit.
+
+### Verified
+- Store tests: **15/15** (added `test_stats_snapshot`).
+- Live: `hubcli doctor` reports correct counts/presence; `install-service
+  --print-only` emits a valid unit using the conda python; `install-service`
+  writes the user unit to the right path (tested against a sandbox `$HOME`).
+
 ## Possible next steps (not yet built)
 
 - Threaded replies / reactions in channels.
 - Optional per-agent tokens for auditing (auth model is pluggable in `server.py`).
-- A systemd unit / supervisor recipe for running the server as a service.

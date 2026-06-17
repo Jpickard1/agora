@@ -165,6 +165,26 @@ def test_prune_all_covers_channels_and_broadcast():
     assert s.read_channel("general") == [] and s.read_broadcast() == []
 
 
+def test_stats_snapshot():
+    s = fresh()
+    s.ensure_channel("ops")
+    s.post_channel("general", "g1", "a", "A")
+    s.post_channel("general", "g2", "a", "A")
+    s.post_channel("ops", "o1", "a", "A")
+    s.post_broadcast("b1", "human:jpic", "jpic")
+    s.register_agent("t1", "trainer")
+    s.post_inbox("t1", "do x", "human:jpic", "jpic")
+    st = s.stats()
+    assert st["config_ok"] is True
+    assert st["auth_enabled"] is True
+    assert st["channels"] == 2
+    assert st["channel_messages_total"] == 3
+    assert st["channel_message_counts"]["general"] == 2
+    assert st["broadcast_messages"] == 1
+    assert st["inbox_messages_total"] == 1
+    assert st["agents_total"] == 1 and st["agents_online"] == 1
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
