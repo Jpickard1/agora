@@ -9,9 +9,14 @@ server sharing the hub filesystem) to see them appear in the UI.
 """
 
 import argparse
+import os
+import sys
 import time
 
-from agenthub.client import HubClient
+# Make `agenthub` importable when run directly (without `pip install -e .`).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from agenthub.client import HubClient  # noqa: E402
 
 
 def main():
