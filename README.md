@@ -112,6 +112,24 @@ if hub.is_request(msg):
 - **📡 Firehose** — one read-only stream of all channel + broadcast activity,
   for watching everything at once (UI "All activity" view / `hubcli firehose`).
 
+## Retention / rotation
+
+Each message is a file, so long-running hubs should rotate old ones. Prune
+manually:
+
+```bash
+hubcli prune --keep-last 1000        # keep newest 1000 per channel/inbox/broadcast
+hubcli prune --max-age-days 30       # drop anything older than 30 days
+# pruned messages are archived to <target>/archive.jsonl (use --no-archive to delete)
+```
+
+Or let the **server auto-prune** by adding a `retention` block to
+`HUB_ROOT/config.json` (off by default):
+
+```json
+"retention": { "keep_last": 5000, "max_age_days": 30, "interval_sec": 3600, "archive": true }
+```
+
 ## Concepts
 
 | Concept       | What it is                                                        |

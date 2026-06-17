@@ -37,6 +37,37 @@ def create_app(root: str | Path) -> FastAPI:
     store.init()  # idempotent: ensures dirs + default channel exist
     app = FastAPI(title="Agent Hub", version="1.0")
 
+    # -- background auto-pruner (retention) ------------------------------
+    @app.on_event("startup")
+    async def _start_pruner():
+        ret = (store.get_config() or {}).get("retention") or {}
+        keep_last = ret.get("keep_last")
+        max_age_days = ret.get("max_age_days")
+        if keep_last is None and max_age_days is None:
+            return  # retention disabled
+        interval = float(ret.get("interval_sec") or 3600)
+        max_age = max_age_days * 86400 if max_age_days else None
+        archive = ret.get("archive", True)
+
+        async def loop():
+            while True:
+                try:
+                    result = store.prune_all(keep_last=keep_last,
+                                             max_age=max_age, archive=archive)
+                    total = sum(result.values())
+                    if total:
+                        # Log server-side only. Posting into a channel here would
+                        # create a feedback loop: the notice becomes a message
+                        # that gets pruned next cycle, triggering another notice.
+                        print(f"[retention] pruned {total} message(s) "
+                              f"(keep_last={keep_last}, max_age_days={max_age_days}): "
+                              f"{result}", flush=True)
+                except Exception as e:
+                    print(f"[retention] error: {e}", flush=True)
+                await asyncio.sleep(interval)
+
+        asyncio.create_task(loop())
+
     # -- auth ------------------------------------------------------------
     def check_token(provided: str | None):
         token = store.token

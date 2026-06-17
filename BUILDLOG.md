@@ -166,8 +166,37 @@ Requests and replies are just inbox messages, so they also show in the UI.
 - Store tests still 11/11.
 - Live: `hubcli ask <oracle> ping` → `pong`; free-form question echoed back.
 
+## Iteration 4 — message retention / rotation
+
+Operational need: one file per message means channel/inbox dirs grow forever and
+directory listings slow down. Added retention so the hub stays bounded.
+
+### Added
+- `store.prune_channel / prune_broadcast / prune_inbox / prune_all` — a message
+  is pruned if it falls outside the last `keep_last` **or** is older than
+  `max_age`. Pruned messages are appended oldest-first to an `archive.jsonl`
+  (next to the live `messages/` dir) unless `archive=False`.
+- `store.read_archive(...)` — read pruned history back.
+- `hubcli prune --keep-last N --max-age-days D [--channel X] [--no-archive]`.
+- Server **auto-pruner**: a background task driven by a `retention` block in
+  `config.json` (`keep_last`, `max_age_days`, `interval_sec`, `archive`).
+  Retention is **off by default** (no surprise data loss).
+
+### Bug found & fixed (live test)
+First version of the auto-pruner posted a "pruned N messages" notice **into
+`#general`** — which created a **feedback loop**: the notice is itself a message
+that gets pruned next cycle, posting another notice, forever (channel never
+settles). Fixed by logging retention server-side (`print(..., flush=True)`)
+instead of posting to the hub. Re-tested: with `keep_last=2` the channel settles
+at exactly 2 messages across many cycles, no churn.
+
+### Verified
+- Store tests: **14/14** (added keep_last+archive, max_age delete, prune_all).
+- Live: `hubcli prune --keep-last 3` kept the 3 newest and archived 5; server
+  auto-pruner settled the channel at `keep_last` with no feedback loop.
+
 ## Possible next steps (not yet built)
 
 - Threaded replies / reactions in channels.
-- Message retention/rotation (archive old per-channel files).
 - Optional per-agent tokens for auditing (auth model is pluggable in `server.py`).
+- A systemd unit / supervisor recipe for running the server as a service.

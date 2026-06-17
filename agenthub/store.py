@@ -124,6 +124,14 @@ class HubStore:
                 "token": token or uuid.uuid4().hex,
                 "created": _now(),
                 "version": 1,
+                # Retention is OFF by default (no surprise data loss). Set
+                # keep_last and/or max_age_days to enable the server's auto-pruner.
+                "retention": {
+                    "keep_last": None,
+                    "max_age_days": None,
+                    "interval_sec": 3600,
+                    "archive": True,
+                },
             }
             _atomic_write_json(self.config_path, cfg)
         # Always make sure a default channel exists.
@@ -276,6 +284,109 @@ class HubStore:
         merged.extend(self.read_broadcast(since_ts=since_ts))
         merged.sort(key=lambda m: m["ts"])
         return merged[-limit:] if limit else merged
+
+    # -- retention / rotation ---------------------------------------------
+
+    def _prune_dir(self, msg_dir: Path, archive_path: Path,
+                   keep_last: int | None, max_age: float | None,
+                   archive: bool = True) -> int:
+        """Prune a message directory. A message is removed if it falls outside
+        the last `keep_last` OR is older than `max_age` seconds. Removed
+        messages are appended (oldest-first) to `archive_path` as JSONL unless
+        archive=False. Returns the number pruned."""
+        if not msg_dir.exists():
+            return 0
+        names = sorted(
+            n for n in os.listdir(msg_dir)
+            if n.endswith(".json") and not n.startswith(".")
+        )
+        to_remove: set[str] = set()
+        if keep_last is not None and len(names) > keep_last:
+            to_remove.update(names[:-keep_last] if keep_last > 0 else names)
+        if max_age is not None:
+            cutoff = f"{int((_now() - max_age) * 1_000_000):020d}"
+            to_remove.update(n for n in names if n[:20] < cutoff)
+        if not to_remove:
+            return 0
+        ordered = [n for n in names if n in to_remove]  # oldest-first
+        if archive:
+            archive_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(archive_path, "a", encoding="utf-8") as f:
+                for n in ordered:
+                    data = _read_json(msg_dir / n)
+                    if data is not None:
+                        f.write(json.dumps(data, ensure_ascii=False) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+        for n in ordered:
+            try:
+                (msg_dir / n).unlink()
+            except OSError:
+                pass
+        return len(ordered)
+
+    def prune_channel(self, channel: str, keep_last: int | None = None,
+                      max_age: float | None = None, archive: bool = True) -> int:
+        name = _safe_name(channel)
+        cdir = self.channels_dir / name
+        return self._prune_dir(cdir / "messages", cdir / "archive.jsonl",
+                               keep_last, max_age, archive)
+
+    def prune_broadcast(self, keep_last: int | None = None,
+                        max_age: float | None = None, archive: bool = True) -> int:
+        return self._prune_dir(self.broadcast_dir,
+                               self.broadcast_dir / "archive.jsonl",
+                               keep_last, max_age, archive)
+
+    def prune_inbox(self, agent_id: str, keep_last: int | None = None,
+                    max_age: float | None = None, archive: bool = True) -> int:
+        to_id = _safe_name(agent_id)
+        idir = self.inbox_dir / to_id
+        return self._prune_dir(idir, idir / "archive.jsonl",
+                               keep_last, max_age, archive)
+
+    def prune_all(self, keep_last: int | None = None, max_age: float | None = None,
+                  archive: bool = True) -> dict[str, int]:
+        """Prune every channel, broadcast, and inbox. Returns counts per target."""
+        result: dict[str, int] = {}
+        for ch in self.list_channels():
+            n = self.prune_channel(ch["name"], keep_last, max_age, archive)
+            if n:
+                result[f"#{ch['name']}"] = n
+        n = self.prune_broadcast(keep_last, max_age, archive)
+        if n:
+            result["broadcast"] = n
+        if self.inbox_dir.exists():
+            for idir in self.inbox_dir.iterdir():
+                if idir.is_dir():
+                    n = self.prune_inbox(idir.name, keep_last, max_age, archive)
+                    if n:
+                        result[f"inbox:{idir.name}"] = n
+        return result
+
+    def read_archive(self, channel: str | None = None, broadcast: bool = False,
+                     agent_id: str | None = None, limit: int | None = None
+                     ) -> list[dict[str, Any]]:
+        """Read archived (pruned) messages back from JSONL, oldest-first."""
+        if broadcast:
+            path = self.broadcast_dir / "archive.jsonl"
+        elif agent_id:
+            path = self.inbox_dir / _safe_name(agent_id) / "archive.jsonl"
+        else:
+            path = self.channels_dir / _safe_name(channel or "general") / "archive.jsonl"
+        if not path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return out[-limit:] if limit else out
 
     # -- agents / presence -------------------------------------------------
 

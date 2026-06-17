@@ -136,6 +136,31 @@ def cmd_firehose(args):
         print(f"[{_fmt_ts(m['ts'])}] {where:12} {m.get('author_name')}: {m['text']}")
 
 
+def cmd_prune(args):
+    store = _store(args)
+    max_age = args.max_age_days * 86400 if args.max_age_days else None
+    if args.keep_last is None and max_age is None:
+        print("Specify --keep-last and/or --max-age-days.", file=sys.stderr)
+        sys.exit(1)
+    archive = not args.no_archive
+    if args.channel:
+        n = store.prune_channel(args.channel, keep_last=args.keep_last,
+                                max_age=max_age, archive=archive)
+        print(f"Pruned {n} message(s) from #{args.channel}"
+              + (" (archived)" if archive else " (deleted)"))
+    else:
+        result = store.prune_all(keep_last=args.keep_last, max_age=max_age,
+                                 archive=archive)
+        total = sum(result.values())
+        if not total:
+            print("Nothing to prune.")
+        else:
+            for target, n in result.items():
+                print(f"  {target}: {n}")
+            print(f"Pruned {total} message(s) total"
+                  + (" (archived to archive.jsonl)" if archive else " (deleted)"))
+
+
 def cmd_ask(args):
     text = args.text if args.text is not None else sys.stdin.read().strip()
     if not text:
@@ -280,6 +305,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="Author id")
     sp.add_argument("--kind", default="human")
     sp.set_defaults(func=cmd_broadcast)
+
+    sp = sub.add_parser("prune", help="Archive/rotate old messages (retention)")
+    sp.add_argument("--keep-last", type=int, help="Keep only the last N messages per target")
+    sp.add_argument("--max-age-days", type=float, help="Remove messages older than D days")
+    sp.add_argument("--channel", help="Only prune this channel (default: everything)")
+    sp.add_argument("--no-archive", action="store_true", help="Delete instead of archiving")
+    sp.set_defaults(func=cmd_prune)
 
     sp = sub.add_parser("ask", help="Send a request to an agent and wait for its reply")
     sp.add_argument("to", help="Target agent id")

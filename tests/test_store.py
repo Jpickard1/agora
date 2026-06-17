@@ -130,6 +130,41 @@ def test_limit():
     assert [m["text"] for m in last3] == ["m7", "m8", "m9"]
 
 
+def test_prune_keep_last_archives():
+    s = fresh()
+    for i in range(10):
+        s.post_channel("general", f"m{i}", "a", "A")
+    pruned = s.prune_channel("general", keep_last=3)
+    assert pruned == 7
+    remaining = [m["text"] for m in s.read_channel("general")]
+    assert remaining == ["m7", "m8", "m9"]
+    archived = [m["text"] for m in s.read_archive("general")]
+    assert archived == [f"m{i}" for i in range(7)]  # oldest-first, all 7
+
+
+def test_prune_max_age_deletes_when_no_archive():
+    s = fresh()
+    for i in range(4):
+        s.post_channel("general", f"m{i}", "a", "A")
+    # everything older than "now" -> all pruned, archive disabled
+    pruned = s.prune_channel("general", max_age=0.0, archive=False)
+    assert pruned == 4
+    assert s.read_channel("general") == []
+    assert s.read_archive("general") == []  # nothing archived
+
+
+def test_prune_all_covers_channels_and_broadcast():
+    s = fresh()
+    s.post_channel("general", "g", "a", "A")
+    s.post_channel("ops", "o", "a", "A")
+    s.post_broadcast("b", "human:jpic", "jpic")
+    result = s.prune_all(keep_last=0)  # remove everything
+    assert result.get("#general") == 1
+    assert result.get("#ops") == 1
+    assert result.get("broadcast") == 1
+    assert s.read_channel("general") == [] and s.read_broadcast() == []
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
