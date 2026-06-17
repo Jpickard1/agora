@@ -1,0 +1,267 @@
+"""hubcli -- command line interface to the Agent Hub.
+
+Works against the shared filesystem directly; the web server need not be
+running. Designed to be trivially droppable into any agent or shell script.
+
+Examples
+--------
+    hubcli init --root /ewsc/jpickard/.agent-hub      # one-time setup
+    hubcli register --name trainer --caps gpu,train
+    hubcli post -c general "training started on gpu01"
+    hubcli read -c general --tail 20
+    hubcli send <agent_id> "please pause and checkpoint"
+    hubcli inbox --id trainer-gpu01-12345 --watch
+    hubcli agents
+    hubcli serve --host 0.0.0.0 --port 8787           # launch the web UI
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import sys
+import time
+from datetime import datetime
+
+from .config import resolve_root, resolve_token, write_pointer
+from .store import HubStore
+from .client import HubClient, default_agent_id
+
+
+def _fmt_ts(ts: float) -> str:
+    return datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+
+
+def _print_msg(m: dict) -> None:
+    kind = m.get("author_kind", "agent")
+    marker = {"human": "🧑", "system": "⚙", "agent": "🤖"}.get(kind, "•")
+    dest = ""
+    if m.get("to"):
+        dest = f" → @{m['to']}"
+    print(f"[{_fmt_ts(m['ts'])}] {marker} {m.get('author_name', m.get('author'))}{dest}: {m['text']}")
+
+
+def _store(args) -> HubStore:
+    return HubStore(resolve_root(getattr(args, "root", None)))
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_init(args):
+    root = resolve_root(args.root)
+    store = HubStore(root)
+    cfg = store.init(token=args.token)
+    write_pointer(root)
+    print(f"Hub initialised at: {root}")
+    print(f"Shared token:       {cfg['token']}")
+    print(f"Pointer written to: ~/.agent-hub-path")
+    print("\nShare these with your agents/servers:")
+    print(f"  export AGENT_HUB_ROOT={root}")
+    print(f"  export AGENT_HUB_TOKEN={cfg['token']}")
+
+
+def cmd_register(args):
+    store = _store(args)
+    aid = args.id or default_agent_id(args.name)
+    caps = [c.strip() for c in (args.caps or "").split(",") if c.strip()]
+    rec = store.register_agent(
+        aid, args.name, host=socket.gethostname().split(".")[0],
+        kind=args.kind, capabilities=caps)
+    print(f"Registered agent: {rec['id']}  (name={rec['name']}, host={rec['host']})")
+    print("Use this id for inbox polling:")
+    print(f"  hubcli inbox --id {rec['id']} --watch")
+
+
+def cmd_post(args):
+    store = _store(args)
+    text = args.text if args.text is not None else sys.stdin.read().strip()
+    if not text:
+        print("Nothing to post (empty text).", file=sys.stderr)
+        sys.exit(1)
+    name = args.author or "cli"
+    m = store.post_channel(args.channel, text, author=args.id or name,
+                           author_name=name, author_kind=args.kind,
+                           host=socket.gethostname().split(".")[0])
+    print(f"Posted to #{m.channel} ({m.id[:8]})")
+
+
+def cmd_send(args):
+    store = _store(args)
+    text = args.text if args.text is not None else sys.stdin.read().strip()
+    if not text:
+        print("Nothing to send (empty text).", file=sys.stderr)
+        sys.exit(1)
+    name = args.author or "human:cli"
+    m = store.post_inbox(args.to, text, author=args.id or name,
+                         author_name=name, author_kind=args.kind,
+                         host=socket.gethostname().split(".")[0])
+    print(f"Sent instruction to @{m.to} ({m.id[:8]})")
+
+
+def cmd_read(args):
+    store = _store(args)
+    limit = args.tail if args.tail else None
+    msgs = store.read_channel(args.channel, limit=limit)
+    if args.json:
+        print(json.dumps(msgs, indent=2))
+        return
+    if not msgs:
+        print(f"(no messages in #{args.channel})")
+    for m in msgs:
+        _print_msg(m)
+
+
+def cmd_inbox(args):
+    store = _store(args)
+    if not args.id:
+        print("--id required (the agent id whose inbox to read).", file=sys.stderr)
+        sys.exit(1)
+    if args.watch:
+        print(f"Watching inbox for {args.id} (Ctrl-C to stop)…")
+        cursor = time.time() if not args.all else 0.0
+        try:
+            while True:
+                if not args.no_heartbeat:
+                    store.heartbeat(args.id)
+                msgs = store.read_inbox(args.id, since_ts=cursor)
+                for m in msgs:
+                    cursor = max(cursor, m["ts"])
+                    _print_msg(m)
+                time.sleep(args.interval)
+        except KeyboardInterrupt:
+            print("\nStopped.")
+        return
+    msgs = store.read_inbox(args.id, limit=args.tail or None)
+    if args.json:
+        print(json.dumps(msgs, indent=2))
+        return
+    if not msgs:
+        print("(inbox empty)")
+    for m in msgs:
+        _print_msg(m)
+
+
+def cmd_agents(args):
+    store = _store(args)
+    agents = store.list_agents(online_window=args.window)
+    if args.json:
+        print(json.dumps(agents, indent=2))
+        return
+    if not agents:
+        print("(no agents registered)")
+        return
+    print(f"{'STATUS':8} {'ID':40} {'HOST':16} {'LAST SEEN':10} CAPABILITIES")
+    for a in agents:
+        dot = "🟢 online" if a.get("online") else "⚪ offline"
+        last = f"{int(a.get('age', 0))}s ago"
+        caps = ",".join(a.get("capabilities", []))
+        print(f"{dot:8} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
+
+
+def cmd_channels(args):
+    store = _store(args)
+    chans = store.list_channels()
+    if args.json:
+        print(json.dumps(chans, indent=2))
+        return
+    for c in chans:
+        print(f"#{c['name']:20} {c.get('description', '')}")
+
+
+def cmd_mkchannel(args):
+    store = _store(args)
+    name = store.ensure_channel(args.name, description=args.description or "")
+    print(f"Channel ready: #{name}")
+
+
+def cmd_serve(args):
+    # Imported lazily so the CLI works without FastAPI installed.
+    from .server import run_server
+    run_server(root=resolve_root(args.root), host=args.host, port=args.port)
+
+
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="hubcli", description="Agent Hub CLI")
+    p.add_argument("--root", help="Hub root dir (overrides env/pointer)")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("init", help="Initialise a hub directory")
+    sp.add_argument("--token", help="Shared token (generated if omitted)")
+    sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("register", help="Register/announce an agent")
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--id", help="Stable agent id (auto-derived if omitted)")
+    sp.add_argument("--kind", default="agent")
+    sp.add_argument("--caps", help="Comma-separated capabilities")
+    sp.set_defaults(func=cmd_register)
+
+    sp = sub.add_parser("post", help="Post a message to a channel")
+    sp.add_argument("text", nargs="?", help="Message text (or stdin)")
+    sp.add_argument("-c", "--channel", default="general")
+    sp.add_argument("--author", help="Display name")
+    sp.add_argument("--id", help="Author id")
+    sp.add_argument("--kind", default="agent")
+    sp.set_defaults(func=cmd_post)
+
+    sp = sub.add_parser("send", help="Send a directed instruction to an agent")
+    sp.add_argument("to", help="Target agent id")
+    sp.add_argument("text", nargs="?", help="Message text (or stdin)")
+    sp.add_argument("--author", help="Display name")
+    sp.add_argument("--id", help="Author id")
+    sp.add_argument("--kind", default="human")
+    sp.set_defaults(func=cmd_send)
+
+    sp = sub.add_parser("read", help="Read a channel")
+    sp.add_argument("-c", "--channel", default="general")
+    sp.add_argument("--tail", type=int, help="Only the last N messages")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_read)
+
+    sp = sub.add_parser("inbox", help="Read/watch an agent's directed messages")
+    sp.add_argument("--id", help="Agent id whose inbox to read")
+    sp.add_argument("--watch", action="store_true")
+    sp.add_argument("--all", action="store_true", help="When watching, include history")
+    sp.add_argument("--interval", type=float, default=2.0)
+    sp.add_argument("--no-heartbeat", action="store_true")
+    sp.add_argument("--tail", type=int)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_inbox)
+
+    sp = sub.add_parser("agents", help="List registered agents + presence")
+    sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_agents)
+
+    sp = sub.add_parser("channels", help="List channels")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_channels)
+
+    sp = sub.add_parser("mkchannel", help="Create a channel")
+    sp.add_argument("name")
+    sp.add_argument("--description", "-d")
+    sp.set_defaults(func=cmd_mkchannel)
+
+    sp = sub.add_parser("serve", help="Run the web UI server")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--port", type=int, default=8787)
+    sp.set_defaults(func=cmd_serve)
+
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

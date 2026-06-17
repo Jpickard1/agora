@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+# Local hub data should never be committed
+.agent-hub/
+hub-data/
+*.log

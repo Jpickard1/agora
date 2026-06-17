@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Hub</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <!-- Token gate -->
+  <div id="gate" class="gate hidden">
+    <div class="gate-card">
+      <h1>🛰️ Agent Hub</h1>
+      <p>Enter the shared token to connect.</p>
+      <input id="token-input" type="password" placeholder="shared token" autocomplete="off" />
+      <button id="token-btn">Connect</button>
+      <div id="token-err" class="err"></div>
+    </div>
+  </div>
+
+  <div id="app" class="app hidden">
+    <!-- Channels / DMs sidebar -->
+    <aside class="sidebar">
+      <div class="brand">🛰️ Agent Hub</div>
+      <div class="section-head">
+        <span>Channels</span>
+        <button id="add-channel" title="New channel">＋</button>
+      </div>
+      <ul id="channel-list" class="list"></ul>
+      <div class="section-head"><span>Direct / Instruct</span></div>
+      <ul id="dm-list" class="list"></ul>
+      <div class="status-bar"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></div>
+    </aside>
+
+    <!-- Main message pane -->
+    <main class="main">
+      <header class="topbar">
+        <div id="view-title"># general</div>
+        <div id="view-sub" class="sub"></div>
+      </header>
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer">
+        <input id="msg-input" type="text" placeholder="Message…" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </main>
+
+    <!-- Agents panel -->
+    <aside class="agents">
+      <div class="section-head"><span>Agents</span><span id="agent-count" class="count"></span></div>
+      <ul id="agent-list" class="list agent-list"></ul>
+    </aside>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
