@@ -841,6 +841,7 @@ function appendMessage(m, scroll = true) {
   const mentioned = mentionsViewer(m);   // @me / @all highlight (issue #52)
   const el = document.createElement("div");
   el.className = "msg " + directed + (isAlert ? " alert" : "") + (mentioned ? " mentioned" : "");
+  if (m.id) el.dataset.msgId = m.id;   // shared anchor for #51 search jump-to (worker1)
   el.innerHTML = `
     <div class="avatar">${isAlert ? "🚨" : avatar}</div>
     <div class="body">
