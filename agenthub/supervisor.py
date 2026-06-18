@@ -150,6 +150,63 @@ def detect_stalled(running, now, threshold, alerted, activity_ts):
     return to_alert, active
 
 
+# --- wedged-agent detection (issue #111) -------------------------------------
+# A "wedged" agent has a live, heartbeating BRIDGE (so it shows online) but isn't
+# PROCESSING turns — the little-pickle/monitor situation. It's deliberately
+# distinguished from offline (not heartbeating) and from busy-working
+# (legitimately mid-turn) so we never flag a healthy, working agent. We reuse the
+# #53 liveness signal the bridge already computes, plus the #54 delivery backlog,
+# both observable from hub state alone.
+
+def _has_backlog(delivery, now, stale_after):
+    """#54 signal computed hub-side: messages are queued for the agent but none
+    has been delivered recently → it isn't draining its queue. queued==0 is
+    always healthy."""
+    d = delivery or {}
+    if (d.get("queued") or 0) <= 0:
+        return False
+    return (now - (d.get("last_delivered_ts") or 0)) > stale_after
+
+
+def is_wedged(agent, now, stale_after):
+    """True iff `agent` is responsive-but-not-processing: ONLINE, NOT busy-working,
+    and either the bridge flagged it stuck mid-turn (liveness=='wedged') or it has
+    a stale, undrained delivery backlog. Offline or busy agents are never wedged
+    (conservative: a working agent is left alone)."""
+    if not agent.get("online"):
+        return False                      # offline ≠ wedged
+    if agent.get("liveness") == "busy":
+        return False                      # busy-working ≠ wedged
+    if agent.get("liveness") == "wedged":
+        return True                       # bridge saw it stuck mid-turn (#53)
+    return _has_backlog(agent.get("delivery"), now, stale_after)
+
+
+def detect_wedged(agents, now, threshold, handled, wedged_since, *, stale_after):
+    """Pure. Track how long each agent has been *continuously* wedged; flag those
+    wedged ≥ `threshold` and not already in `handled` (de-dup). Agents that are no
+    longer wedged (or vanished from the roster) are returned as `recovered` so the
+    caller can clear them from handled/since/attempts and re-arm.
+    Returns (to_handle, recovered, wedged_since')."""
+    to_handle, recovered = [], set()
+    since = dict(wedged_since)
+    live_ids = {a["id"] for a in agents}
+    for a in agents:
+        aid = a["id"]
+        if is_wedged(a, now, stale_after):
+            since.setdefault(aid, now)
+            if (now - since[aid]) >= threshold and aid not in handled:
+                to_handle.append(a)
+        elif aid in since:
+            since.pop(aid, None)
+            recovered.add(aid)
+    for aid in list(since):               # agent left the roster → recovered
+        if aid not in live_ids:
+            since.pop(aid, None)
+            recovered.add(aid)
+    return to_handle, recovered, since
+
+
 def _whoami():
     import os as _os
     try:
@@ -189,6 +246,10 @@ def main(argv=None):
                     help="flag a task stale if its owner has been offline this long (s)")
     ap.add_argument("--stall-after", type=float, default=1800.0,
                     help="alert if a RUNNING task shows no commit/hub activity this long (s)")
+    ap.add_argument("--wedged-after", type=float, default=120.0,
+                    help="flag an ONLINE agent as wedged after it's been not-processing this long (s)")
+    ap.add_argument("--wedged-stale", type=float, default=60.0,
+                    help="treat a queued-but-undelivered backlog as 'not draining' after this long (s)")
     ap.add_argument("--repo-dir", default=None,
                     help="git checkout to probe for task commits (default: this install)")
     ap.add_argument("--gh-sync", dest="gh_sync", action="store_true", default=True,
@@ -240,6 +301,19 @@ def main(argv=None):
     repo_dir = args.repo_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     print(f"[supervisor] stall-detector: alert after {int(args.stall_after)}s "
           f"of no commit/hub activity (repo {repo_dir})", flush=True)
+
+    # Wedged-agent detector (#111). Alert-only by default; auto-recovery is opt-in
+    # via a `wedged_recovery` block in config.json, OFF by default + attempt-capped,
+    # and NEVER kills an agent. e.g. {"enabled": true, "max_attempts": 2}
+    wedged_handled: set[str] = set()   # agents already flagged this episode (de-dup)
+    wedged_since: dict[str, float] = {}   # agent -> ts first seen continuously wedged
+    wedged_attempts: dict[str, int] = {}  # agent -> auto-recovery nudges used
+    wr_cfg = (store.get_config() or {}).get("wedged_recovery") or {}
+    wr_enabled = bool(wr_cfg.get("enabled", False))
+    wr_max_attempts = int(wr_cfg.get("max_attempts") or 2)
+    print(f"[supervisor] wedged-detector: alert after {int(args.wedged_after)}s; "
+          f"auto-recovery {('on (max ' + str(wr_max_attempts) + ' nudges)') if wr_enabled else 'off'}",
+          flush=True)
     cu_cursor, cu_seen, cu_user = 0.0, set(), _whoami()   # cross-user DM drain (#88)
     if store.shared_root():
         print(f"[supervisor] cross-user DM drain on for user '{cu_user}' "
@@ -310,6 +384,56 @@ def main(argv=None):
                     author_kind="system", host="supervisor", meta={"alert": True})
                 stall_alerted.add(t["id"])
                 print(f"[supervisor] flagged STALLED task {t['id']}", flush=True)
+
+            # Wedged-agent detector (#111): an agent whose bridge is alive but that
+            # isn't processing turns (stuck mid-turn or not draining its queue).
+            # Alert-only by default; opt-in bounded auto-recovery (never kills).
+            agents_now = [a for a in store.list_agents(online_window=30.0)
+                          if a.get("kind") != "system" and a["id"] != args.manager]
+            w_to_handle, w_recovered, wedged_since = detect_wedged(
+                agents_now, now, args.wedged_after, wedged_handled, wedged_since,
+                stale_after=args.wedged_stale)
+            for aid in w_recovered:               # recovered -> re-arm
+                wedged_handled.discard(aid)
+                wedged_attempts.pop(aid, None)
+            for a in w_to_handle:
+                aid = a["id"]
+                name = a.get("name") or aid
+                task = next((t["id"] for t in running if t.get("claimed_by") == aid), None)
+                task_txt = f"task {task}" if task else "no claimed task"
+                mins = int(args.wedged_after // 60) or 1
+                # Opt-in, off-by-default, attempt-capped auto-recovery: a gentle
+                # inbox re-poke. It NEVER kills or restarts the agent.
+                if wr_enabled and wedged_attempts.get(aid, 0) < wr_max_attempts:
+                    n = wedged_attempts.get(aid, 0) + 1
+                    wedged_attempts[aid] = n
+                    store.post_inbox(
+                        aid,
+                        f"⚠️ you appear wedged (online but not processing your queue). "
+                        f"Auto-recovery nudge {n}/{wr_max_attempts}: please drain pending "
+                        f"messages, or re-login if you're stuck.",
+                        author="system:supervisor", author_name="supervisor",
+                        author_kind="system", host="supervisor")
+                    print(f"[supervisor] nudged wedged agent {aid} ({n}/{wr_max_attempts})",
+                          flush=True)
+                # Always raise the de-duped #general alert + ping the manager.
+                store.post_channel(
+                    "general",
+                    f"\U0001F6A8 wedged agent: @{name} is online but not processing turns for "
+                    f">{mins}m ({task_txt}) — likely needs relogin. @{args.manager} please "
+                    f"check / relogin.",
+                    author="system:supervisor", author_name="supervisor",
+                    author_kind="system", host="supervisor", meta={"alert": True})
+                store.post_inbox(
+                    args.manager,
+                    f"🚨 wedged agent @{name} ({task_txt}) — online but not processing for "
+                    f">{mins}m; likely needs relogin"
+                    + (" (auto-recovery nudges exhausted)" if wr_enabled and
+                       wedged_attempts.get(aid, 0) >= wr_max_attempts else "") + ".",
+                    author="system:supervisor", author_name="supervisor",
+                    author_kind="system", host="supervisor")
+                wedged_handled.add(aid)
+                print(f"[supervisor] flagged WEDGED agent {aid}", flush=True)
 
             # Cross-user DM delivery (#88): drain the shared DM area into local
             # inboxes. No-op unless a shared_root is configured (gated on jpic).

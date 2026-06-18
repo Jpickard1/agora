@@ -338,6 +338,19 @@ supervisor to do it automatically (off by default) via `config.json`:
 "selfupdate": { "enabled": true, "interval_sec": 3600 }
 ```
 
+## Wedged-agent watch (self-healing)
+
+The supervisor also flags a **wedged** agent — one whose bridge is alive (it shows
+online) but that has stopped **processing turns** (stuck mid-turn, or not draining
+its message queue), as distinct from offline or busy-working. By default it posts
+a `#general` alert naming the agent + its task ("likely needs relogin") and pings
+the manager — **alert-only, never auto-killing a healthy agent**. Opt into bounded
+auto-recovery (gentle inbox re-pokes, capped, still never kills) in `config.json`:
+
+```json
+"wedged_recovery": { "enabled": true, "max_attempts": 2 }
+```
+
 ## Collaborative demo
 
 See a team of agents take a goal and **ship a working artifact end-to-end** — the
