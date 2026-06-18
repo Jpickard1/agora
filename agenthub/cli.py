@@ -155,13 +155,24 @@ def cmd_register(args):
 def cmd_post(args):
     store = _store(args)
     image_path = getattr(args, "image", None)
-    # With --image we don't block on stdin; text is optional (image-only is fine).
-    if args.text is not None:
+    body_file = getattr(args, "body_file", None)
+    # Body source, in precedence order. --body-file and stdin are the SHELL-SAFE
+    # paths (#121): the content never sits in a shell argument, so backticks /
+    # $(...) / ; in the message can't be command-substituted by the author's shell
+    # the way `hubcli post "...$(...)..."` would be.
+    if body_file:
+        try:
+            with open(body_file, encoding="utf-8") as f:
+                text = f.read().rstrip("\n")
+        except OSError as e:
+            print(f"Cannot read --body-file: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.text is not None:
         text = args.text
     elif image_path:
         text = ""
     else:
-        text = sys.stdin.read().strip()
+        text = sys.stdin.read().rstrip("\n")
     meta = {"alert": True} if getattr(args, "alert", False) else {}
     if image_path:
         try:
@@ -1440,7 +1451,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_register)
 
     sp = sub.add_parser("post", help="Post a message to a channel")
-    sp.add_argument("text", nargs="?", help="Message text (or stdin)")
+    sp.add_argument("text", nargs="?", help="Message text. SHELL-SAFETY (#121): a "
+                    "literal text arg is interpreted by YOUR shell first — backticks/$() "
+                    "in it run as commands. For untrusted/code content use --body-file or "
+                    "stdin (no shell), or single-quote the arg.")
     sp.add_argument("-c", "--channel", default="general")
     sp.add_argument("--author", help="Display name")
     sp.add_argument("--id", help="Author id")
@@ -1448,6 +1462,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--alert", action="store_true", help="High-visibility alert (white bg/black text/🚨, pinned)")
     sp.add_argument("--reply-to", dest="reply_to", help="Parent message id (threaded reply, #64)")
     sp.add_argument("--image", help="Attach an image/figure file (path); text optional (#117)")
+    sp.add_argument("--body-file", dest="body_file", help="Read the message body from a "
+                    "file — SHELL-SAFE (#121): content is never interpreted by the shell")
     sp.set_defaults(func=cmd_post)
 
     sp = sub.add_parser("alert", help="Post a high-visibility alert (must-read; pinned + 🚨)")
