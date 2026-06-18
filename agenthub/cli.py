@@ -273,6 +273,46 @@ def cmd_graph(args):
         print(f"  {e['source']:20} → {e['target']:20} ({e['count']})")
 
 
+def cmd_export(args):
+    from . import export as exp
+    store = _store(args)
+    since = exp.parse_since(args.since)
+    snap = exp.gather(store, since=since)
+
+    fmts = list(exp.RENDERERS) if args.format == "all" else [args.format]
+
+    # --stdout: print one format to stdout instead of writing files.
+    if args.stdout:
+        fmt = fmts[0]
+        sys.stdout.write(exp.RENDERERS[fmt](snap))
+        if not exp.RENDERERS[fmt](snap).endswith("\n"):
+            sys.stdout.write("\n")
+        return
+
+    out_dir = args.out or os.path.join(str(resolve_root(args.root)), "exports")
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = datetime.fromtimestamp(snap["meta"]["generated_ts"]).strftime("%Y%m%d-%H%M%S")
+    written = []
+    for fmt in fmts:
+        path = os.path.join(out_dir, f"agora-report-{stamp}.{exp.EXT[fmt]}")
+        with open(path, "w") as f:
+            f.write(exp.RENDERERS[fmt](snap))
+        written.append(path)
+
+    m = snap["meta"]
+    print(f"Exported {m['messages']} messages / {m['tasks']} tasks / "
+          f"{m['agents']} agents ({exp._window_label(snap)}):")
+    for path in written:
+        print(f"  {path}")
+
+    if args.post_standup:
+        text = exp.standup_text(snap)
+        store.post_channel(args.post_standup, text,
+                           author=args.author or "reporter", author_name=args.author or "reporter",
+                           author_kind="system", host=socket.gethostname().split(".")[0])
+        print(f"Posted standup summary to #{args.post_standup}")
+
+
 def cmd_usage(args):
     store = _store(args)
     u = store.usage_stats(online_window=args.window)
@@ -787,6 +827,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--dot", action="store_true", help="Emit Graphviz DOT")
     sp.set_defaults(func=cmd_graph)
+
+    sp = sub.add_parser("export", help="Export channels/tasks/decisions + a standup report")
+    sp.add_argument("--format", choices=["all", "md", "json", "html"], default="all",
+                    help="Report format(s) to write (default: all)")
+    sp.add_argument("--out", help="Output directory (default: <root>/exports)")
+    sp.add_argument("--since", help="Limit to recent activity, e.g. 24h, 7d, 30m, 2w (default: all)")
+    sp.add_argument("--stdout", action="store_true",
+                    help="Print one format to stdout instead of writing files")
+    sp.add_argument("--post-standup", dest="post_standup", metavar="CHANNEL",
+                    help="Also post the standup summary to this channel")
+    sp.add_argument("--author", help="Author name for the posted standup")
+    sp.set_defaults(func=cmd_export)
 
     sp = sub.add_parser("forget", help="Remove an agent record from the roster")
     sp.add_argument("agent", help="Agent id to forget")
