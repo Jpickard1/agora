@@ -543,6 +543,55 @@ def _print_project(p, verbose=False):
             print("   rollup: " + ", ".join(f"{k}={v}" for k, v in bys.items()))
 
 
+def cmd_lock(args):
+    store = _store(args)
+    owner = args.author or args.id or "cli"
+    r = store.acquire_lock(args.resource, owner=owner, owner_name=owner,
+                           note=args.note or "")
+    if r["ok"]:
+        verb = {"acquired": "🔒 Locked", "refreshed": "🔁 Refreshed lock on",
+                "expired-takeover": "🔓→🔒 Took over expired lock on"}.get(
+                    r["reason"], "Locked")
+        print(f"{verb} {args.resource} (owner @{owner})")
+        if r.get("lock", {}).get("stole_from"):
+            print(f"   (previous owner @{r['lock']['stole_from']} was offline)")
+    else:
+        held = r["lock"]
+        print(f"✗ {args.resource} is locked by @{held.get('owner')}"
+              + (f" — {held['note']}" if held.get("note") else ""), file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_unlock(args):
+    store = _store(args)
+    owner = args.author or args.id or "cli"
+    if store.release_lock(args.resource, owner=owner, force=args.force):
+        print(f"🔓 Released {args.resource}")
+    else:
+        cur = store.get_lock(args.resource)
+        if cur is None:
+            print(f"(no lock on {args.resource})")
+        else:
+            print(f"✗ {args.resource} is held by @{cur.get('owner')}, not you "
+                  f"(use --force to override)", file=sys.stderr)
+            sys.exit(1)
+
+
+def cmd_locks(args):
+    store = _store(args)
+    locks = store.list_locks()
+    if args.json:
+        print(json.dumps(locks, indent=2))
+        return
+    if not locks:
+        print("(no active locks)")
+        return
+    for lk in locks:
+        flag = " ⚠️ EXPIRED (owner offline)" if lk.get("expired") else ""
+        note = f"  — {lk['note']}" if lk.get("note") else ""
+        print(f"🔒 {lk['resource']}  @{lk['owner']}  ({int(lk.get('age', 0))}s){flag}{note}")
+
+
 def cmd_project_new(args):
     store = _store(args)
     p = store.project_new(args.id, name=args.name or args.id, goal=args.goal or "",
@@ -1210,6 +1259,23 @@ def build_parser() -> argparse.ArgumentParser:
     kp = ksub.add_parser("rm", help="Delete a KB entry")
     kp.add_argument("id_arg", metavar="id", help="Entry id")
     kp.set_defaults(func=cmd_kb_rm)
+
+    # advisory locks: cooperative file/resource locks (issue #10)
+    sp = sub.add_parser("lock", help="Acquire an advisory lock on a resource")
+    sp.add_argument("resource", help="The resource to lock (e.g. a file path)")
+    sp.add_argument("--author", help="Lock owner (agent id/name)")
+    sp.add_argument("--note", help="Why you're locking it")
+    sp.set_defaults(func=cmd_lock)
+
+    sp = sub.add_parser("unlock", help="Release an advisory lock you hold")
+    sp.add_argument("resource")
+    sp.add_argument("--author", help="Lock owner (must match, unless --force)")
+    sp.add_argument("--force", action="store_true", help="Release even if not the owner")
+    sp.set_defaults(func=cmd_unlock)
+
+    sp = sub.add_parser("locks", help="List active advisory locks")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_locks)
 
     # projects: group tasks/channels under a goal with milestones + rollup (#22)
     sp = sub.add_parser("project", help="Projects: group tasks/channels under a goal")

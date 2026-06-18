@@ -142,6 +142,7 @@ class HubStore:
         self.tasks_dir = self.root / "tasks"
         self.kb_dir = self.root / "kb"
         self.projects_dir = self.root / "projects"
+        self.locks_dir = self.root / "locks"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -150,7 +151,7 @@ class HubStore:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
                   self.broadcast_dir, self.uploads_dir, self.tasks_dir,
-                  self.kb_dir, self.projects_dir):
+                  self.kb_dir, self.projects_dir, self.locks_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -1060,4 +1061,96 @@ class HubStore:
                     rec["progress"] = self.project_progress(rec["id"])
                     out.append(rec)
         out.sort(key=lambda r: r.get("updated_ts", 0), reverse=True)
+        return out
+
+    # -- advisory locks (issue #10) ---------------------------------------
+    # Cooperative (advisory) locks so agents avoid editing the same resource at
+    # once. Lock-free + race-proof via O_EXCL create; a lock whose owner has
+    # gone offline auto-expires so work is never stranded. Honoring them is by
+    # convention — nothing forces an agent to check.
+
+    def _lock_path(self, resource):
+        import hashlib
+        h = hashlib.sha1(resource.strip().encode("utf-8")).hexdigest()[:16]
+        prefix = _safe_name(resource)[:60]
+        return self.locks_dir / f"{prefix}-{h}.json"
+
+    def _owner_offline(self, owner, online_window):
+        """True if `owner` is a known agent that hasn't heart-beat within the
+        window. Unknown owners (e.g. a human) never auto-expire."""
+        rec = self.get_agent(owner)
+        if not rec:
+            return False
+        if rec.get("status") == "offline":
+            return True
+        return (_now() - rec.get("last_seen", 0)) > online_window
+
+    def acquire_lock(self, resource, owner, owner_name="", note="",
+                     online_window=30.0):
+        """Acquire an advisory lock on `resource` for `owner`.
+        Returns {ok, lock, reason}. Re-acquiring your own lock refreshes it; a
+        lock held by an OFFLINE owner is auto-expired and taken over."""
+        self.locks_dir.mkdir(parents=True, exist_ok=True)
+        path = self._lock_path(resource)
+        rec = {
+            "resource": resource,
+            "owner": owner,
+            "owner_name": owner_name or owner,
+            "note": note,
+            "acquired_ts": _now(),
+        }
+        if _atomic_create_exclusive(path, rec):
+            return {"ok": True, "lock": rec, "reason": "acquired"}
+        existing = _read_json(path)
+        if existing is None:              # raced with a release; try once more
+            if _atomic_create_exclusive(path, rec):
+                return {"ok": True, "lock": rec, "reason": "acquired"}
+            existing = _read_json(path) or {}
+        if existing.get("owner") == owner:
+            _atomic_write_json(path, rec)         # refresh held lock
+            return {"ok": True, "lock": rec, "reason": "refreshed"}
+        if self._owner_offline(existing.get("owner", ""), online_window):
+            rec["stole_from"] = existing.get("owner")
+            _atomic_write_json(path, rec)         # owner offline → take over
+            return {"ok": True, "lock": rec, "reason": "expired-takeover"}
+        return {"ok": False, "lock": existing, "reason": "held"}
+
+    def release_lock(self, resource, owner, force=False):
+        """Release a lock. Only the owner may release it unless force=True.
+        Returns True if a lock was removed."""
+        path = self._lock_path(resource)
+        existing = _read_json(path)
+        if existing is None:
+            return False
+        if not force and existing.get("owner") != owner:
+            return False
+        try:
+            path.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+
+    def get_lock(self, resource, online_window=30.0):
+        rec = _read_json(self._lock_path(resource))
+        if rec is None:
+            return None
+        rec["expired"] = self._owner_offline(rec.get("owner", ""), online_window)
+        rec["age"] = _now() - rec.get("acquired_ts", _now())
+        return rec
+
+    def list_locks(self, online_window=30.0, include_expired=True):
+        """All advisory locks, each annotated with expired/age. Expired = the
+        owner is an offline agent (the lock is reclaimable)."""
+        if not self.locks_dir.exists():
+            return []
+        out = []
+        for f in sorted(self.locks_dir.glob("*.json")):
+            rec = _read_json(f)
+            if not rec:
+                continue
+            rec["expired"] = self._owner_offline(rec.get("owner", ""), online_window)
+            rec["age"] = _now() - rec.get("acquired_ts", _now())
+            if include_expired or not rec["expired"]:
+                out.append(rec)
+        out.sort(key=lambda r: r.get("acquired_ts", 0), reverse=True)
         return out
