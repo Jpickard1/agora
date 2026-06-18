@@ -284,3 +284,11 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .pj-chip{font-size:12px;background:var(--bg3);color:var(--text);border-radius:10px;padding:2px 9px}
 .pj-chip[data-ch]{cursor:pointer}
 .pj-chip[data-ch]:hover{color:var(--accent)}
+
+/* ---- retired agents group (issue #11) ---- */
+.retired-head{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);
+  font-size:12px;text-transform:uppercase;letter-spacing:.04em;padding:8px 4px 4px;
+  margin-top:6px;border-top:1px solid var(--border)}
+.retired-head:hover{color:var(--text)}
+.retired-head .count{margin-left:auto;background:var(--bg3);border-radius:10px;padding:0 7px}
+.agent.retired{opacity:.6}
