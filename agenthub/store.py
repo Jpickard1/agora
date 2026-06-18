@@ -66,6 +66,28 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)  # atomic on POSIX within the same directory
 
 
+def _atomic_create_exclusive(path: Path, data: dict[str, Any]) -> bool:
+    """Create `path` containing JSON `data`, FAILING if it already exists.
+
+    Uses O_CREAT|O_EXCL, an atomic, lock-free mutual-exclusion primitive that is
+    reliable on NFS (unlike file locking). This is how a task is *claimed*: the
+    first writer to create the claim file wins; everyone else gets False. No
+    read-modify-write race, so two agents can never both win a claim.
+    Returns True if THIS caller created the file, False if it already existed.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    return True
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -75,6 +97,13 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         # rename so a fully-named *.json file should always be complete, but we
         # stay defensive against NFS caching quirks.
         return None
+
+
+# Task lifecycle. A task moves open -> claimed -> running -> done|failed (or
+# cancelled). The current status is the latest status event; terminal statuses
+# end the task.
+TASK_STATUSES = ("open", "claimed", "running", "done", "failed", "cancelled")
+TASK_TERMINAL = ("done", "failed", "cancelled")
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +139,7 @@ class HubStore:
         self.agents_dir = self.root / "agents"
         self.broadcast_dir = self.root / "broadcast"
         self.uploads_dir = self.root / "uploads"
+        self.tasks_dir = self.root / "tasks"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -117,7 +147,7 @@ class HubStore:
     def init(self, token: str | None = None) -> dict[str, Any]:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
-                  self.broadcast_dir, self.uploads_dir):
+                  self.broadcast_dir, self.uploads_dir, self.tasks_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -506,3 +536,117 @@ class HubStore:
 
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         return _read_json(self.agents_dir / f"{_safe_name(agent_id)}.json")
+
+    # -- tasks (durable work dispatch) ------------------------------------
+    #
+    # The manager turns each dispatchable unit of work (e.g. a GitHub issue)
+    # into a task here, so dispatch state is DURABLE — it survives restarts and
+    # is not re-derived from chat each tick. A task is a small directory:
+    #
+    #     tasks/<task_id>/task.json     immutable definition (title, ref, ...)
+    #     tasks/<task_id>/claim.json    the atomic claim (first-writer-wins)
+    #     tasks/<task_id>/events/       append-only status events (immutable)
+    #
+    # Claiming is lock-free and race-proof via O_EXCL create (see
+    # _atomic_create_exclusive): two workers can never both claim one task, so a
+    # task is never double-assigned even if the manager dispatches it twice.
+
+    def create_task(self, task_id: str, title: str = "", ref: str = "",
+                    brief: str = "", capability: str = "",
+                    created_by: str = "", labels: list[str] | None = None,
+                    meta: dict | None = None) -> dict[str, Any]:
+        """Create a task (idempotent: if it already exists, return it as-is so a
+        re-dispatch never clobbers an in-progress task)."""
+        tid = _safe_name(task_id)
+        tdir = self.tasks_dir / tid
+        (tdir / "events").mkdir(parents=True, exist_ok=True)
+        task_path = tdir / "task.json"
+        if not task_path.exists():
+            _atomic_write_json(task_path, {
+                "id": tid,
+                "title": title,
+                "ref": ref,                 # e.g. "Jpickard1/MGB-main#42"
+                "brief": brief,
+                "capability": capability,   # skill needed (matches agent caps)
+                "labels": labels or [],
+                "created_by": created_by,
+                "created_ts": _now(),
+                "meta": meta or {},
+            })
+        return self.get_task(tid)
+
+    def _append_task_event(self, task_id: str, status: str, by: str = "",
+                           note: str = "") -> dict[str, Any]:
+        tid = _safe_name(task_id)
+        ts = _now()
+        ev = {"task_id": tid, "status": status, "by": by, "ts": ts, "note": note}
+        _atomic_write_json(self.tasks_dir / tid / "events" / _msg_filename(ts), ev)
+        return ev
+
+    def claim_task(self, task_id: str, agent_id: str, note: str = "") -> bool:
+        """Atomically claim a task for `agent_id`. Returns True if THIS agent won
+        the claim, False if it was already claimed (or the task is unknown).
+        Lock-free and race-proof — exactly one caller can ever win."""
+        tid = _safe_name(task_id)
+        tdir = self.tasks_dir / tid
+        if not (tdir / "task.json").exists():
+            return False
+        won = _atomic_create_exclusive(tdir / "claim.json", {
+            "task_id": tid,
+            "agent": _safe_name(agent_id),
+            "claimed_ts": _now(),
+            "note": note,
+        })
+        if won:
+            self._append_task_event(tid, "claimed", by=agent_id, note=note)
+        return won
+
+    def update_task(self, task_id: str, status: str, by: str = "",
+                    note: str = "") -> dict[str, Any] | None:
+        """Append a status event (running/done/failed/cancelled/…). Returns the
+        updated task, or None if the task is unknown."""
+        tid = _safe_name(task_id)
+        if not (self.tasks_dir / tid / "task.json").exists():
+            return None
+        self._append_task_event(tid, status, by=by, note=note)
+        return self.get_task(tid)
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """A task with its derived current status, claimer, and event history."""
+        tid = _safe_name(task_id)
+        tdir = self.tasks_dir / tid
+        rec = _read_json(tdir / "task.json")
+        if rec is None:
+            return None
+        claim = _read_json(tdir / "claim.json")
+        events = self._read_dir_messages(tdir / "events")  # chronological
+        status = "open"
+        if claim:
+            status = "claimed"
+        if events:
+            status = events[-1].get("status", status)
+        rec = dict(rec)
+        rec["status"] = status
+        rec["claimed_by"] = (claim or {}).get("agent")
+        rec["claimed_ts"] = (claim or {}).get("claimed_ts")
+        rec["events"] = events
+        rec["updated_ts"] = events[-1]["ts"] if events else rec.get("created_ts")
+        return rec
+
+    def list_tasks(self, status: str | None = None) -> list[dict[str, Any]]:
+        """All tasks (optionally filtered by current status), newest update first.
+        This is the manager's durable 'what's assigned / done' view."""
+        if not self.tasks_dir.exists():
+            return []
+        out = []
+        for tdir in sorted(self.tasks_dir.iterdir()):
+            if not tdir.is_dir():
+                continue
+            t = self.get_task(tdir.name)
+            if t is None:
+                continue
+            if status and t["status"] != status:
+                continue
+            out.append(t)
+        out.sort(key=lambda t: t.get("updated_ts") or 0, reverse=True)
+        return out
