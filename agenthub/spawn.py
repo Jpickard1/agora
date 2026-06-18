@@ -56,7 +56,12 @@ def _hubcli_bin() -> str:
 
 
 def _claude_bin() -> str:
-    return os.environ.get("AGORA_CLAUDE_BIN") or "claude"
+    # Prefer an explicit override, then 'claude2' (the working CLI on jpic's
+    # systems), falling back to 'claude' when claude2 isn't available.
+    override = os.environ.get("AGORA_CLAUDE_BIN")
+    if override:
+        return override
+    return "claude2" if shutil.which("claude2") else "claude"
 
 
 def bootstrap_prompt(name: str, tasks: str, bridge_session: str) -> str:

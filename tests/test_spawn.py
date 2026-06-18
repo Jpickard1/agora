@@ -17,7 +17,7 @@ def _plan(**kw):
 
 
 def test_local_plan_uses_argv_arrays():
-    p = _plan()
+    p = _plan(claude_bin="claude")
     assert p["local"] is True and p["target"] == "local"
     # claude starts in the right session + working dir
     assert p["immediate"][0] == ["tmux", "new-session", "-d", "-s", "trainer",
@@ -28,6 +28,20 @@ def test_local_plan_uses_argv_arrays():
     # the seed prompt is typed, then Enter
     assert p["delayed"][0][:5] == ["tmux", "send-keys", "-t", "trainer", "-l"]
     assert p["delayed"][1] == ["tmux", "send-keys", "-t", "trainer", "Enter"]
+
+
+def test_claude_bin_prefers_claude2(monkeypatch):
+    # explicit override always wins
+    monkeypatch.setenv("AGORA_CLAUDE_BIN", "/custom/claude")
+    assert spawn._claude_bin() == "/custom/claude"
+    monkeypatch.delenv("AGORA_CLAUDE_BIN", raising=False)
+    # prefer claude2 when it's on PATH...
+    monkeypatch.setattr(spawn.shutil, "which",
+                        lambda n: "/usr/bin/claude2" if n == "claude2" else None)
+    assert spawn._claude_bin() == "claude2"
+    # ...and fall back to claude when claude2 is absent
+    monkeypatch.setattr(spawn.shutil, "which", lambda n: None)
+    assert spawn._claude_bin() == "claude"
 
 
 def test_session_defaults_to_name_and_is_sanitised():
