@@ -83,6 +83,19 @@ def test_forget_agent():
     assert s.forget_agent("nope") is False
 
 
+def test_comm_graph():
+    s = fresh()
+    # manager DMs worker1 twice, worker1 replies once; self-message ignored
+    s.post_inbox("worker1", "task A", author="manager", author_name="manager")
+    s.post_inbox("worker1", "task B", author="manager", author_name="manager")
+    s.post_inbox("manager", "done", author="worker1", author_name="worker1")
+    s.post_inbox("worker1", "self note", author="worker1", author_name="worker1")
+    g = s.comm_graph()
+    assert set(g["nodes"]) == {"manager", "worker1"}
+    edges = {(e["source"], e["target"]): e["count"] for e in g["edges"]}
+    assert edges == {("manager", "worker1"): 2, ("worker1", "manager"): 1}
+
+
 def test_broadcast_reaches_all():
     s = fresh()
     s.post_broadcast("all hands: pause", "human:jpic", "jpic")

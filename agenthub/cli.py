@@ -252,6 +252,27 @@ def cmd_agents(args):
         print(f"{dot:8} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
 
 
+def cmd_graph(args):
+    store = _store(args)
+    g = store.comm_graph()
+    if args.json:
+        print(json.dumps(g, indent=2))
+        return
+    if args.dot:
+        print("digraph agora {")
+        print("  rankdir=LR;")
+        for e in g["edges"]:
+            print(f'  "{e["source"]}" -> "{e["target"]}" [label="{e["count"]}"];')
+        print("}")
+        return
+    if not g["edges"]:
+        print("(no agent-to-agent messages yet)")
+        return
+    print("Agent communication (who DMs whom):")
+    for e in g["edges"]:
+        print(f"  {e['source']:20} → {e['target']:20} ({e['count']})")
+
+
 def cmd_usage(args):
     store = _store(args)
     u = store.usage_stats(online_window=args.window)
@@ -761,6 +782,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_usage)
+
+    sp = sub.add_parser("graph", help="Agent communication graph (who DMs whom)")
+    sp.add_argument("--json", action="store_true")
+    sp.add_argument("--dot", action="store_true", help="Emit Graphviz DOT")
+    sp.set_defaults(func=cmd_graph)
 
     sp = sub.add_parser("forget", help="Remove an agent record from the roster")
     sp.add_argument("agent", help="Agent id to forget")
