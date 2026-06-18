@@ -140,6 +140,7 @@ class HubStore:
         self.broadcast_dir = self.root / "broadcast"
         self.uploads_dir = self.root / "uploads"
         self.tasks_dir = self.root / "tasks"
+        self.kb_dir = self.root / "kb"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -147,7 +148,8 @@ class HubStore:
     def init(self, token: str | None = None) -> dict[str, Any]:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
-                  self.broadcast_dir, self.uploads_dir, self.tasks_dir):
+                  self.broadcast_dir, self.uploads_dir, self.tasks_dir,
+                  self.kb_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -809,3 +811,106 @@ class HubStore:
             "host": self._host_metrics(),
             "token_tracking": "token usage: follow-up — agents report per-turn tokens via a bridge hook",
         }
+
+    # -- knowledge base (issue #25) ---------------------------------------
+    # A shared, searchable store of markdown notes / links / artifacts so
+    # agents can consult prior work + record decisions instead of duplicating.
+    # One JSON file per entry under kb/, mirroring the channel/task layout.
+
+    def kb_add(self, title, body="", tags=None, kind="note", url="",
+               author="", author_name="", entry_id=None):
+        """Create or update a KB entry. Passing an existing entry_id updates it
+        in place (preserving created_ts); otherwise a slug id is derived from
+        the title (with a short suffix to avoid collisions)."""
+        self.kb_dir.mkdir(parents=True, exist_ok=True)
+        tags = [t.strip().lower() for t in (tags or []) if str(t).strip()]
+        if entry_id:
+            eid = _safe_name(entry_id)
+        else:
+            base = _safe_name(title)[:48] or "entry"
+            eid = base
+            if (self.kb_dir / f"{eid}.json").exists():
+                eid = f"{base}-{uuid.uuid4().hex[:6]}"
+        path = self.kb_dir / f"{eid}.json"
+        existing = _read_json(path)
+        now = _now()
+        rec = {
+            "id": eid,
+            "title": title,
+            "body": body,
+            "tags": tags,
+            "kind": kind,                 # note | link | artifact
+            "url": url,
+            "author": author,
+            "author_name": author_name or author,
+            "created_ts": existing.get("created_ts", now) if existing else now,
+            "updated_ts": now,
+        }
+        _atomic_write_json(path, rec)
+        return rec
+
+    def kb_get(self, entry_id):
+        return _read_json(self.kb_dir / f"{_safe_name(entry_id)}.json")
+
+    def kb_delete(self, entry_id):
+        path = self.kb_dir / f"{_safe_name(entry_id)}.json"
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    def _kb_all(self):
+        if not self.kb_dir.exists():
+            return []
+        out = []
+        for f in self.kb_dir.iterdir():
+            if f.suffix == ".json" and f.is_file():
+                rec = _read_json(f)
+                if rec:
+                    out.append(rec)
+        return out
+
+    def kb_list(self, tag=None, limit=None):
+        """All entries, newest-updated first; optionally filtered by tag."""
+        entries = self._kb_all()
+        if tag:
+            t = tag.strip().lower()
+            entries = [e for e in entries if t in (e.get("tags") or [])]
+        entries.sort(key=lambda e: e.get("updated_ts", 0), reverse=True)
+        return entries[:limit] if limit else entries
+
+    def kb_tags(self):
+        """All distinct tags with their entry counts (for the UI tag cloud)."""
+        counts = {}
+        for e in self._kb_all():
+            for t in e.get("tags") or []:
+                counts[t] = counts.get(t, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def kb_search(self, query, tag=None, limit=None):
+        """Case-insensitive full-text search over title/body/tags. Results are
+        ranked: title hits weigh most, then tags, then body; ties break by
+        most-recently updated. An empty query degenerates to kb_list."""
+        entries = self.kb_list(tag=tag)
+        q = (query or "").strip().lower()
+        if not q:
+            return entries[:limit] if limit else entries
+        terms = [w for w in q.split() if w]
+        scored = []
+        for e in entries:
+            title = (e.get("title") or "").lower()
+            body = (e.get("body") or "").lower()
+            tags = " ".join(e.get("tags") or []).lower()
+            score = 0
+            for w in terms:
+                if w in title:
+                    score += 5
+                if w in tags:
+                    score += 3
+                if w in body:
+                    score += 1
+            if score:
+                scored.append((score, e.get("updated_ts", 0), e))
+        scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        ranked = [e for _, _, e in scored]
+        return ranked[:limit] if limit else ranked

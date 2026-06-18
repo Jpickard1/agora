@@ -424,6 +424,80 @@ def _print_task(t: dict, verbose: bool = False) -> None:
             print(f"    [{_fmt_ts(e['ts'])}] {e['status']} by {e.get('by','?')}{note}")
 
 
+def _print_kb_entry(e, verbose=False):
+    tags = (" " + " ".join(f"#{t}" for t in e["tags"])) if e.get("tags") else ""
+    kind = e.get("kind", "note")
+    icon = {"note": "📝", "link": "🔗", "artifact": "📦"}.get(kind, "•")
+    print(f"{icon} {e['id']}  {e.get('title','')}{tags}")
+    if e.get("url"):
+        print(f"    {e['url']}")
+    if verbose and e.get("body"):
+        print()
+        for line in e["body"].splitlines():
+            print(f"    {line}")
+        print()
+
+
+def cmd_kb_add(args):
+    store = _store(args)
+    body = args.body
+    if body is None and not sys.stdin.isatty():
+        body = sys.stdin.read()
+    tags = [t for t in (args.tags or "").split(",") if t.strip()]
+    name = args.author or "cli"
+    e = store.kb_add(args.title, body=body or "", tags=tags, kind=args.kind,
+                     url=args.url or "", author=name,
+                     author_name=name, entry_id=args.id_arg)
+    print(f"✓ Saved KB entry: {e['id']}" + (" (updated)" if args.id_arg else ""))
+
+
+def cmd_kb_get(args):
+    store = _store(args)
+    e = store.kb_get(args.id_arg)
+    if e is None:
+        print(f"✗ No such KB entry: {args.id_arg}", file=sys.stderr)
+        sys.exit(2)
+    if args.json:
+        print(json.dumps(e, indent=2))
+        return
+    _print_kb_entry(e, verbose=True)
+
+
+def cmd_kb_list(args):
+    store = _store(args)
+    entries = store.kb_list(tag=args.tag, limit=args.limit)
+    if args.json:
+        print(json.dumps(entries, indent=2))
+        return
+    if not entries:
+        print("(knowledge base is empty)" + (f" for tag #{args.tag}" if args.tag else ""))
+        return
+    for e in entries:
+        _print_kb_entry(e)
+
+
+def cmd_kb_search(args):
+    store = _store(args)
+    entries = store.kb_search(args.query, tag=args.tag, limit=args.limit)
+    if args.json:
+        print(json.dumps(entries, indent=2))
+        return
+    if not entries:
+        print(f"(no KB entries match '{args.query}')")
+        return
+    for e in entries:
+        _print_kb_entry(e)
+
+
+def cmd_kb_rm(args):
+    store = _store(args)
+    if store.kb_delete(args.id_arg):
+        print(f"✓ Deleted KB entry: {args.id_arg}")
+    else:
+        print(f"✗ No such KB entry: {args.id_arg}", file=sys.stderr)
+        sys.exit(2)
+
+
 def cmd_task_new(args):
     store = _store(args)
     t = store.create_task(
@@ -908,6 +982,42 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("id")
     tp.add_argument("--json", action="store_true")
     tp.set_defaults(func=cmd_task_show)
+
+    # knowledge base: shared, searchable notes/links/artifacts (issue #25)
+    sp = sub.add_parser("kb", help="Shared knowledge base (add/get/search/list/rm)")
+    ksub = sp.add_subparsers(dest="kb_cmd", required=True)
+
+    kp = ksub.add_parser("add", help="Add or update a KB entry (body via arg or stdin)")
+    kp.add_argument("title", help="Entry title")
+    kp.add_argument("--body", help="Markdown body (else read from stdin)")
+    kp.add_argument("--tags", help="Comma-separated tags")
+    kp.add_argument("--kind", choices=["note", "link", "artifact"], default="note")
+    kp.add_argument("--url", help="URL (for links/artifacts)")
+    kp.add_argument("--id", dest="id_arg", help="Update an existing entry by id")
+    kp.add_argument("--author", help="Author display name")
+    kp.set_defaults(func=cmd_kb_add)
+
+    kp = ksub.add_parser("get", help="Show one KB entry (full body)")
+    kp.add_argument("id_arg", metavar="id", help="Entry id")
+    kp.add_argument("--json", action="store_true")
+    kp.set_defaults(func=cmd_kb_get)
+
+    kp = ksub.add_parser("list", help="List KB entries (newest first)")
+    kp.add_argument("--tag", help="Filter by tag")
+    kp.add_argument("--limit", type=int)
+    kp.add_argument("--json", action="store_true")
+    kp.set_defaults(func=cmd_kb_list)
+
+    kp = ksub.add_parser("search", help="Full-text search the KB")
+    kp.add_argument("query", help="Search terms")
+    kp.add_argument("--tag", help="Restrict to a tag")
+    kp.add_argument("--limit", type=int)
+    kp.add_argument("--json", action="store_true")
+    kp.set_defaults(func=cmd_kb_search)
+
+    kp = ksub.add_parser("rm", help="Delete a KB entry")
+    kp.add_argument("id_arg", metavar="id", help="Entry id")
+    kp.set_defaults(func=cmd_kb_rm)
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")

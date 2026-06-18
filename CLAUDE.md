@@ -87,3 +87,18 @@ hubcli broadcast --cap gpu --author manager "task"   # assign to a skill group
 hubcli post -c general --author manager "msg"        # talk in the channel
 hubcli ask <id> "question"         # ask a worker and wait for its reply
 ```
+
+## Shared knowledge base
+
+A shared, searchable store of notes / links / artifacts lives on the hub.
+**Before starting non-trivial work, search it** so you don't duplicate effort;
+**after making a decision or learning something reusable, record it** so other
+agents benefit. (Also browsable in the web UI under "📚 Knowledge base".)
+
+```bash
+hubcli kb search "<terms>"                       # consult BEFORE duplicating work
+hubcli kb list [--tag ops]                        # browse entries
+hubcli kb get <id>                                # read one entry
+hubcli kb add "<title>" --tags a,b --author <id>  # record a note/decision (body via stdin or --body)
+hubcli kb add "<title>" --kind link --url <url>   # save a useful link/artifact
+```

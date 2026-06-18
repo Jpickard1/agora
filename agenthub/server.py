@@ -187,6 +187,49 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- shared knowledge base (issue #25) ------------------------------
+    @app.get("/api/kb")
+    def kb_list(q: str | None = None, tag: str | None = None,
+                limit: int | None = None,
+                x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        if q:
+            entries = store.kb_search(q, tag=tag, limit=limit)
+        else:
+            entries = store.kb_list(tag=tag, limit=limit)
+        return {"entries": entries, "tags": store.kb_tags()}
+
+    @app.get("/api/kb/{entry_id}")
+    def kb_get(entry_id: str, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        e = store.kb_get(entry_id)
+        if e is None:
+            raise HTTPException(404, "no such KB entry")
+        return e
+
+    @app.post("/api/kb")
+    def kb_add(payload: dict = Body(...),
+               x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        title = (payload.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "title required")
+        tags = payload.get("tags") or []
+        if isinstance(tags, str):
+            tags = [t for t in tags.split(",") if t.strip()]
+        name = payload.get("author_name") or payload.get("author") or "web"
+        return store.kb_add(
+            title, body=payload.get("body", ""), tags=tags,
+            kind=payload.get("kind", "note"), url=payload.get("url", ""),
+            author=name, author_name=name, entry_id=payload.get("id"))
+
+    @app.delete("/api/kb/{entry_id}")
+    def kb_delete(entry_id: str, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        if not store.kb_delete(entry_id):
+            raise HTTPException(404, "no such KB entry")
+        return {"ok": True}
+
     # -- system utilization / efficiency panel (issue #6) ---------------
     @app.get("/api/usage")
     def usage(window: float = 30.0, x_hub_token: str | None = Header(default=None)):

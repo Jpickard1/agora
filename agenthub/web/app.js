@@ -256,7 +256,114 @@ async function selectView(view) {
     composer.style.display = "none";
     state.usage = await api(`/api/usage`);
     renderUsage();
+  } else if (view.type === "kb") {
+    $("#view-title").textContent = "📚 Knowledge base";
+    $("#view-sub").textContent = "shared, searchable notes / links / artifacts — consult before duplicating work";
+    composer.style.display = "none";
+    await refreshKb();
   }
+}
+
+/* ---------------- knowledge base (issue #25) ---------------- */
+async function refreshKb() {
+  const q = (state.kbQuery || "").trim();
+  const tag = state.kbTag || "";
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (tag) params.set("tag", tag);
+  try {
+    state.kb = await api("/api/kb" + (params.toString() ? "?" + params : ""));
+  } catch (_) { state.kb = { entries: [], tags: {} }; }
+  renderKb();
+}
+
+function kbIcon(kind) {
+  return kind === "link" ? "🔗" : kind === "artifact" ? "📦" : "📝";
+}
+
+function renderKb() {
+  const box = $("#messages");
+  const kb = state.kb || { entries: [], tags: {} };
+  const tags = kb.tags || {};
+  const tagChips = Object.keys(tags).map((t) => {
+    const on = state.kbTag === t ? " on" : "";
+    return `<span class="kb-tag${on}" data-tag="${esc(t)}">#${esc(t)} <em>${tags[t]}</em></span>`;
+  }).join("");
+  const entries = (kb.entries || []).map((e) => {
+    const tagline = (e.tags || []).map((t) => `#${esc(t)}`).join(" ");
+    const url = e.url
+      ? `<a class="kb-url" href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener noreferrer">${esc(e.url)}</a>`
+      : "";
+    const body = e.body ? `<div class="kb-body">${renderMarkdown(e.body)}</div>` : "";
+    return `<div class="kb-entry" data-id="${esc(e.id)}">
+      <div class="kb-head">
+        <span class="kb-icon">${kbIcon(e.kind)}</span>
+        <span class="kb-title">${esc(e.title)}</span>
+        <span class="kb-tags">${esc(tagline)}</span>
+        <button class="kb-del" data-id="${esc(e.id)}" title="delete">✕</button>
+      </div>
+      ${url}${body}
+      <div class="kb-meta">${esc(e.author_name || e.author || "?")} · ${fmtTime(e.updated_ts)}</div>
+    </div>`;
+  }).join("") || `<div class="empty">No entries${state.kbQuery ? " match your search" : " yet"}.</div>`;
+
+  box.innerHTML = `
+    <div class="kb">
+      <div class="kb-bar">
+        <input id="kb-search" type="search" placeholder="Search the knowledge base…" value="${esc(state.kbQuery || "")}" />
+        <button id="kb-add-btn">＋ New entry</button>
+      </div>
+      ${state.kbTag ? `<div class="kb-filter">filtering by <b>#${esc(state.kbTag)}</b> <span id="kb-clear-tag">clear ✕</span></div>` : ""}
+      ${tagChips ? `<div class="kb-tagcloud">${tagChips}</div>` : ""}
+      <div id="kb-form" class="kb-form hidden">
+        <input id="kb-f-title" type="text" placeholder="Title" />
+        <div class="kb-form-row">
+          <select id="kb-f-kind"><option value="note">note</option><option value="link">link</option><option value="artifact">artifact</option></select>
+          <input id="kb-f-url" type="text" placeholder="URL (for links/artifacts)" />
+          <input id="kb-f-tags" type="text" placeholder="tags, comma,separated" />
+        </div>
+        <textarea id="kb-f-body" rows="4" placeholder="Markdown body…"></textarea>
+        <div class="kb-form-actions">
+          <button id="kb-f-cancel" class="btn-secondary">Cancel</button>
+          <button id="kb-f-save">Save entry</button>
+        </div>
+        <div id="kb-f-err" class="err"></div>
+      </div>
+      <div class="kb-list">${entries}</div>
+    </div>`;
+
+  // search (debounced-ish: on input)
+  const search = $("#kb-search");
+  search.oninput = () => { state.kbQuery = search.value; clearTimeout(state._kbT);
+    state._kbT = setTimeout(refreshKb, 200); };
+  $("#kb-add-btn").onclick = () => $("#kb-form").classList.toggle("hidden");
+  if ($("#kb-clear-tag")) $("#kb-clear-tag").onclick = () => { state.kbTag = ""; refreshKb(); };
+  document.querySelectorAll(".kb-tag").forEach((el) => {
+    el.onclick = () => { state.kbTag = (state.kbTag === el.dataset.tag) ? "" : el.dataset.tag; refreshKb(); };
+  });
+  document.querySelectorAll(".kb-del").forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm("Delete this KB entry?")) return;
+      try { await api("/api/kb/" + encodeURIComponent(el.dataset.id), { method: "DELETE" }); } catch (_) {}
+      refreshKb();
+    };
+  });
+  $("#kb-f-cancel").onclick = () => $("#kb-form").classList.add("hidden");
+  $("#kb-f-save").onclick = async () => {
+    const title = $("#kb-f-title").value.trim();
+    const err = $("#kb-f-err");
+    if (!title) { err.textContent = "Title is required."; return; }
+    const body = JSON.stringify({
+      title, body: $("#kb-f-body").value, kind: $("#kb-f-kind").value,
+      url: $("#kb-f-url").value.trim(), tags: $("#kb-f-tags").value,
+      author_name: state.name,
+    });
+    try {
+      await api("/api/kb", { method: "POST", body });
+      state.kbQuery = "";
+      refreshKb();
+    } catch (e) { err.textContent = "Could not save: " + e.message; }
+  };
 }
 
 // Live utilization panel: totals + host load gauges + per-agent activity table.
@@ -524,6 +631,7 @@ $("#file-input").addEventListener("change", async (e) => {
 });
 
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
+$("#nav-kb").onclick = () => selectView({ type: "kb" });
 $("#nav-usage").onclick = () => selectView({ type: "usage" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
