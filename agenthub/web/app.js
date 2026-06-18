@@ -14,7 +14,7 @@ const LS_NAME = "agenthub.name";
 
 const state = {
   token: localStorage.getItem(LS_KEY) || "",
-  name: localStorage.getItem(LS_NAME) || "jpic",
+  name: localStorage.getItem(LS_NAME) || "",   // resolved from /api/whoami if unset (issue #67)
   view: { type: "channel", id: "general" },
   channels: [],
   agents: [],
@@ -86,6 +86,7 @@ $("#token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $(
 async function start() {
   $("#gate").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  await resolveDisplayName();
   await refreshChannels();
   await refreshAgents();
   await refreshMentions(false);
@@ -112,6 +113,51 @@ function setConn(ok) {
   $("#conn-dot").className = "dot " + (ok ? "ok" : "bad");
   $("#conn-text").textContent = ok ? "live" : "reconnecting…";
 }
+
+/* ---------------- display name / settings (issue #67) ---------------- */
+// Resolve the human's display name: a name they've saved wins; otherwise default
+// to the server's OS username (/api/whoami); last resort "user". No hardcoded name.
+async function resolveDisplayName() {
+  let name = (localStorage.getItem(LS_NAME) || "").trim();
+  if (!name) {
+    try { name = ((await api("/api/whoami")).name || "").trim(); } catch (_) { /* offline */ }
+  }
+  state.name = name || "user";
+  renderMeName();
+}
+
+function renderMeName() {
+  const el = $("#me-name");
+  if (el) el.textContent = state.name;
+}
+
+function openSettings() {
+  $("#set-err").textContent = "";
+  $("#set-name").value = state.name;
+  $("#settings-modal").classList.remove("hidden");
+  $("#set-name").focus();
+  $("#set-name").select();
+}
+function closeSettings() { $("#settings-modal").classList.add("hidden"); }
+
+function saveSettings() {
+  const v = $("#set-name").value.trim();
+  if (!v) { $("#set-err").textContent = "Please enter a name."; return; }
+  state.name = v;
+  localStorage.setItem(LS_NAME, v);
+  renderMeName();
+  closeSettings();
+}
+
+if ($("#settings-btn")) $("#settings-btn").onclick = openSettings;
+if ($("#set-cancel")) $("#set-cancel").onclick = closeSettings;
+if ($("#set-save")) $("#set-save").onclick = saveSettings;
+if ($("#settings-modal")) $("#settings-modal").addEventListener("click", (e) => {
+  if (e.target === $("#settings-modal")) closeSettings();
+});
+if ($("#set-name")) $("#set-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") saveSettings();
+});
 
 function handleEvent(data) {
   if (data.type === "agents") {
