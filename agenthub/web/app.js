@@ -19,6 +19,7 @@ const state = {
   channels: [],
   agents: [],
   tasks: [],        // durable task-board state (live via SSE)
+  mentions: [],     // messages mentioning the viewer (issue #52)
   locks: [],        // advisory locks (live via SSE)
   usage: null,      // utilization snapshot for the usage panel
   messages: [],     // currently displayed
@@ -86,6 +87,7 @@ async function start() {
   $("#app").classList.remove("hidden");
   await refreshChannels();
   await refreshAgents();
+  await refreshMentions(false);
   await refreshLocks();
   await selectView({ type: "channel", id: "general" });
   openStream();
@@ -119,6 +121,8 @@ function handleEvent(data) {
     const m = data.message;
     if (state.view.type === "channel" && m.channel === state.view.id) appendMessage(m);
     if (state.view.type === "firehose") appendMessage(m);
+    // a message that mentions me bumps the unread badge (and the view, if open)
+    if (mentionsViewer(m)) refreshMentions(true);
   } else if (data.type === "inbox") {
     const m = data.message;
     if (state.view.type === "agent" && m.to === state.view.id) appendMessage(m);
@@ -335,6 +339,11 @@ async function selectView(view) {
     $("#view-sub").textContent = "who direct-messages whom — directed, weighted by message count";
     composer.style.display = "none";
     await refreshGraph();
+  } else if (view.type === "mentions") {
+    $("#view-title").textContent = "🔔 Mentions";
+    $("#view-sub").textContent = `messages that mention @${state.name} or @all`;
+    composer.style.display = "none";
+    await refreshMentions(true);
   }
 }
 
@@ -421,6 +430,68 @@ function renderGraph() {
           <tbody>${rows}</tbody></table>
       </div>
     </div>`;
+}
+
+/* ---------------- @mentions (issue #52) ---------------- */
+const _MENTION_RE = /@([A-Za-z0-9][A-Za-z0-9_.\-]*)/g;
+const _MENTION_ALL = new Set(["all", "everyone", "channel", "here"]);
+
+function mentionsViewer(m) {
+  const ms = String(m.text || "").match(_MENTION_RE);
+  if (!ms) return false;
+  const me = (state.name || "").toLowerCase();
+  return ms.some((t) => {
+    const n = t.slice(1).toLowerCase();
+    return n === me || _MENTION_ALL.has(n);
+  });
+}
+
+// Persisted "last seen mentions" timestamp, per viewer, for the unread badge.
+function mentionsSeenKey() { return "agenthub.mentionsSeen." + (state.name || ""); }
+function getMentionsSeen() { return Number(localStorage.getItem(mentionsSeenKey()) || 0); }
+function setMentionsSeen(ts) { localStorage.setItem(mentionsSeenKey(), String(ts || 0)); }
+
+async function refreshMentions(render) {
+  try {
+    state.mentions = await api(`/api/mentions?name=${encodeURIComponent(state.name)}&limit=200`);
+  } catch (_) { state.mentions = []; }
+  updateMentionBadge();
+  if (render && state.view.type === "mentions") renderMentions();
+}
+
+function updateMentionBadge() {
+  const seen = getMentionsSeen();
+  const unread = (state.mentions || []).filter((m) => (m.ts || 0) > seen).length;
+  const badge = $("#mention-badge");
+  if (!badge) return;
+  badge.textContent = String(unread);
+  badge.classList.toggle("hidden", unread === 0);
+}
+
+function renderMentions() {
+  const box = $("#messages");
+  const ms = state.mentions || [];
+  // viewing the mentions list marks them read
+  if (ms.length) setMentionsSeen(ms[0].ts || 0);
+  updateMentionBadge();
+  if (!ms.length) {
+    box.innerHTML = `<div class="empty">No mentions yet. Messages that say `
+      + `<b>@${esc(state.name)}</b> or <b>@all</b> show up here.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="mentions">` + ms.map((m) => {
+    const where = m.channel === "*" ? "→ all agents" : "#" + esc(m.channel);
+    return `<div class="mn" data-ch="${esc(m.channel)}">
+      <div class="mn-head"><span class="mn-where">${where}</span>
+        <span class="author">${esc(m.author_name || m.author)}</span>
+        <span class="time">${fmtTime(m.ts)}</span></div>
+      <div class="text">${renderMarkdown(m.text)}</div></div>`;
+  }).join("") + `</div>`;
+  // click a mention to jump to its channel
+  document.querySelectorAll(".mn[data-ch]").forEach((el) => {
+    const ch = el.dataset.ch;
+    if (ch && ch !== "*") el.onclick = () => selectView({ type: "channel", id: ch });
+  });
 }
 
 /* ---------------- projects (issue #22) ---------------- */
@@ -767,8 +838,9 @@ function appendMessage(m, scroll = true) {
     ? `<img class="msg-img" src="${esc(m.meta.image)}" alt="${esc((m.meta && m.meta.filename) || "image")}" onclick="window.open(this.src,'_blank')" />`
     : "";
   const isAlert = !!(m.meta && m.meta.alert);
+  const mentioned = mentionsViewer(m);   // @me / @all highlight (issue #52)
   const el = document.createElement("div");
-  el.className = "msg " + directed + (isAlert ? " alert" : "");
+  el.className = "msg " + directed + (isAlert ? " alert" : "") + (mentioned ? " mentioned" : "");
   el.innerHTML = `
     <div class="avatar">${isAlert ? "🚨" : avatar}</div>
     <div class="body">
@@ -868,6 +940,7 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
+$("#nav-mentions").onclick = () => selectView({ type: "mentions" });
 $("#nav-projects").onclick = () => selectView({ type: "projects" });
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-kb").onclick = () => selectView({ type: "kb" });
