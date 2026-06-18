@@ -311,12 +311,14 @@ function appendMessage(m, scroll = true) {
   const img = m.meta && m.meta.image
     ? `<img class="msg-img" src="${esc(m.meta.image)}" alt="${esc((m.meta && m.meta.filename) || "image")}" onclick="window.open(this.src,'_blank')" />`
     : "";
+  const isAlert = !!(m.meta && m.meta.alert);
   const el = document.createElement("div");
-  el.className = "msg " + directed;
+  el.className = "msg " + directed + (isAlert ? " alert" : "");
   el.innerHTML = `
-    <div class="avatar">${avatar}</div>
+    <div class="avatar">${isAlert ? "🚨" : avatar}</div>
     <div class="body">
       <div class="head">
+        ${isAlert ? `<span class="alert-tag">🚨 ALERT</span>` : ""}
         <span class="author ${kind}">${esc(m.author_name || m.author)}</span>
         ${m.host ? `<span class="host">${esc(m.host)}</span>` : ""}
         <span class="time">${fmtTime(m.ts)}</span>
