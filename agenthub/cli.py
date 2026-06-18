@@ -548,7 +548,7 @@ def cmd_mkchannel(args):
     store = _store(args)
     # Visibility (#14): default PRIVATE (owner-only, chmod 0700 in the private
     # store); --shared/--public puts it in the group-accessible shared store.
-    visibility = "public" if (args.shared or args.public) else "private"
+    visibility = "public" if args.shared else "private"   # --public aliases --shared (dest=shared)
     name = store.ensure_channel(args.name, description=args.description or "",
                                 visibility=visibility)
     where = "🌐 shared (ewsc_users group)" if visibility == "public" else "🔒 private (owner-only)"
