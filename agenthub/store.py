@@ -176,8 +176,11 @@ class HubStore:
 
     # -- lifecycle ---------------------------------------------------------
 
-    def init(self, token: str | None = None) -> dict[str, Any]:
-        """Create the hub directory tree and config if missing. Idempotent."""
+    def init(self, token: str | None = None,
+             shared_root: str | None = None) -> dict[str, Any]:
+        """Create the hub directory tree and config if missing. Idempotent.
+        `shared_root` (issue #14) is the group-accessible SHARED store for public
+        channels + the participants roster; persisted in config when given."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
                   self.broadcast_dir, self.uploads_dir, self.tasks_dir,
                   self.kb_dir, self.projects_dir, self.locks_dir,
@@ -189,6 +192,8 @@ class HubStore:
                 "token": token or uuid.uuid4().hex,
                 "created": _now(),
                 "version": 1,
+                "shared_root": str(Path(shared_root).expanduser().resolve())
+                               if shared_root else None,
                 # Retention is OFF by default (no surprise data loss). Set
                 # keep_last and/or max_age_days to enable the server's auto-pruner.
                 "retention": {
@@ -199,8 +204,21 @@ class HubStore:
                 },
             }
             _atomic_write_json(self.config_path, cfg)
-        # Always make sure a default channel exists.
-        self.ensure_channel("general", description="Default channel for all agents")
+        elif shared_root and not cfg.get("shared_root"):
+            cfg["shared_root"] = str(Path(shared_root).expanduser().resolve())
+            _atomic_write_json(self.config_path, cfg)
+        # If a shared store is configured, ensure its channels dir exists +
+        # group-accessible (public channels live here).
+        sh = self.shared_channels_dir()
+        if sh is not None:
+            sh.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(sh, 0o2770)
+            except OSError:
+                pass
+        # Always make sure the default channel exists — it's PUBLIC (#14).
+        self.ensure_channel("general", description="Default channel for all agents",
+                            visibility="public")
         return cfg
 
     def get_config(self) -> dict[str, Any] | None:
@@ -211,31 +229,121 @@ class HubStore:
         cfg = self.get_config()
         return cfg.get("token") if cfg else None
 
-    # -- channels ----------------------------------------------------------
+    # -- channels (two-store: private + shared, issue #14) -----------------
+    # PUBLIC channels live in the SHARED store (a group-accessible root the whole
+    # ewsc_users group can reach); PRIVATE channels stay in this per-user private
+    # root (owner-only). Reads merge both roots; writes go to the channel's root.
+    # If no shared_root is configured, everything is private_root (back-compat).
 
-    def ensure_channel(self, channel: str, description: str = "") -> str:
+    def shared_root(self) -> Path | None:
+        """The SHARED store root, or None (single-root/back-compat). Source: env
+        AGORA_SHARED_ROOT, else config.json 'shared_root'. The shared store holds
+        ONLY public channels (+ the participants roster / cross-user DM relay that
+        other features layer on, e.g. #86/#88) — never tasks/agents/locks/KB."""
+        p = os.environ.get("AGORA_SHARED_ROOT")
+        if not p:
+            cfg = self.get_config() or {}
+            p = cfg.get("shared_root")
+        return Path(p).expanduser().resolve() if p else None
+
+    def shared_channels_dir(self) -> Path | None:
+        """The SHARED store's channels dir, or None (single-root/back-compat)."""
+        sr = self.shared_root()
+        return (sr / "channels") if sr is not None else None
+
+    def _apply_channel_perms(self, cdir: Path, visibility: str) -> None:
+        """OS-enforce visibility via Unix dir perms — the dir is the access gate
+        (others can't traverse a 0700 dir): private -> 0o700 (owner-only),
+        public -> 0o2770 (setgid + group rwx; ewsc_users can read+post)."""
+        mode = 0o700 if visibility == "private" else 0o2770
+        for p in (cdir, cdir / "messages"):
+            try:
+                os.chmod(p, mode)
+            except OSError:
+                pass
+
+    def _channel_base(self, name: str) -> Path | None:
+        """An existing channel's base dir across both roots (private first)."""
+        name = _safe_name(name)
+        priv = self.channels_dir / name
+        if (priv / "meta.json").exists():
+            return priv
+        sh = self.shared_channels_dir()
+        if sh is not None and (sh / name / "meta.json").exists():
+            return sh / name
+        return None
+
+    def _root_for_visibility(self, visibility: str) -> Path:
+        """Where a NEW channel of this visibility is created."""
+        sh = self.shared_channels_dir()
+        if visibility == "public" and sh is not None:
+            return sh
+        return self.channels_dir
+
+    def ensure_channel(self, channel: str, description: str = "",
+                       visibility: str | None = None) -> str:
         name = _safe_name(channel)
-        cdir = self.channels_dir / name
-        (cdir / "messages").mkdir(parents=True, exist_ok=True)
-        meta_path = cdir / "meta.json"
-        if not meta_path.exists():
-            _atomic_write_json(meta_path, {
-                "name": name,
-                "description": description,
-                "created": _now(),
+        base = self._channel_base(name)
+        if base is None:
+            vis = visibility or "private"   # #14: new channels are private by default
+            base = self._root_for_visibility(vis) / name
+            (base / "messages").mkdir(parents=True, exist_ok=True)
+            _atomic_write_json(base / "meta.json", {
+                "name": name, "description": description,
+                "created": _now(), "visibility": vis,
             })
+            self._apply_channel_perms(base, vis)
+            return name
+        if visibility is not None:
+            meta = _read_json(base / "meta.json") or {"name": name}
+            if meta.get("visibility") != visibility:
+                base = self._set_visibility(name, base, meta, visibility)
+            self._apply_channel_perms(base, visibility)
         return name
 
+    def _set_visibility(self, name: str, base: Path, meta: dict,
+                        visibility: str) -> Path:
+        """Set visibility, MOVING the channel dir to the matching root if needed
+        (private<->shared). The move is the migration step (gated to live go)."""
+        import shutil as _shutil
+        meta["visibility"] = visibility
+        target_root = self._root_for_visibility(visibility)
+        if base.parent != target_root:
+            dest = target_root / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.move(str(base), str(dest))
+            base = dest
+        _atomic_write_json(base / "meta.json", meta)
+        return base
+
+    def set_channel_visibility(self, channel: str, visibility: str) -> str:
+        """Make a channel public/private (chmod + meta, moving roots if needed)."""
+        if visibility not in ("public", "private"):
+            raise ValueError("visibility must be 'public' or 'private'")
+        return self.ensure_channel(channel, visibility=visibility)
+
+    def _channel_messages_dir(self, name: str) -> Path:
+        """Messages dir of a channel (resolved across roots; falls back to the
+        private root for a just-created channel)."""
+        base = self._channel_base(name) or (self.channels_dir / _safe_name(name))
+        return base / "messages"
+
     def list_channels(self) -> list[dict[str, Any]]:
-        if not self.channels_dir.exists():
-            return []
-        out = []
-        for cdir in sorted(self.channels_dir.iterdir()):
-            if not cdir.is_dir():
+        roots = [self.channels_dir]
+        sh = self.shared_channels_dir()
+        if sh is not None:
+            roots.append(sh)
+        seen: dict[str, dict[str, Any]] = {}
+        for root in roots:
+            if not root or not root.exists():
                 continue
-            meta = _read_json(cdir / "meta.json") or {"name": cdir.name}
-            out.append(meta)
-        return out
+            for cdir in sorted(root.iterdir()):
+                if not cdir.is_dir():
+                    continue
+                meta = _read_json(cdir / "meta.json") or {"name": cdir.name}
+                meta.setdefault("visibility", "public")
+                seen[meta.get("name", cdir.name)] = meta
+        return sorted(seen.values(), key=lambda m: m.get("name", ""))
 
     # -- posting -----------------------------------------------------------
 
@@ -251,7 +359,7 @@ class HubStore:
             channel=name, host=host, meta=meta or {},
             reply_to=reply_to or None,
         )
-        path = self.channels_dir / name / "messages" / _msg_filename(ts)
+        path = self._channel_messages_dir(name) / _msg_filename(ts)
         _atomic_write_json(path, msg.to_dict())
         return msg
 
@@ -348,9 +456,8 @@ class HubStore:
 
     def read_channel(self, channel: str, since_ts: float = 0.0,
                      limit: int | None = None) -> list[dict[str, Any]]:
-        name = _safe_name(channel)
         return self._read_dir_messages(
-            self.channels_dir / name / "messages", since_ts, limit)
+            self._channel_messages_dir(channel), since_ts, limit)
 
     def read_thread(self, channel: str, parent_id: str) -> dict[str, Any]:
         """A thread (issue #64): the parent message plus its direct replies
@@ -555,9 +662,8 @@ class HubStore:
 
     def prune_channel(self, channel: str, keep_last: int | None = None,
                       max_age: float | None = None, archive: bool = True) -> int:
-        name = _safe_name(channel)
-        cdir = self.channels_dir / name
-        return self._prune_dir(cdir / "messages", cdir / "archive.jsonl",
+        base = self._channel_base(channel) or (self.channels_dir / _safe_name(channel))
+        return self._prune_dir(base / "messages", base / "archive.jsonl",
                                keep_last, max_age, archive)
 
     def prune_broadcast(self, keep_last: int | None = None,
@@ -601,7 +707,9 @@ class HubStore:
         elif agent_id:
             path = self.inbox_dir / _safe_name(agent_id) / "archive.jsonl"
         else:
-            path = self.channels_dir / _safe_name(channel or "general") / "archive.jsonl"
+            base = self._channel_base(channel or "general") or \
+                (self.channels_dir / _safe_name(channel or "general"))
+            path = base / "archive.jsonl"
         if not path.exists():
             return []
         out: list[dict[str, Any]] = []
@@ -627,7 +735,7 @@ class HubStore:
                        if n.endswith(".json") and not n.startswith("."))
 
         channels = self.list_channels()
-        ch_counts = {c["name"]: _count(self.channels_dir / c["name"] / "messages")
+        ch_counts = {c["name"]: _count(self._channel_messages_dir(c["name"]))
                      for c in channels}
         agents = self.list_agents(online_window=online_window)
         inbox_total = 0

@@ -57,9 +57,11 @@ def _store(args) -> HubStore:
 def cmd_init(args):
     root = resolve_root(args.root)
     store = HubStore(root)
-    cfg = store.init(token=args.token)
+    cfg = store.init(token=args.token, shared_root=getattr(args, "shared_root", None))
     print(f"Hub initialised at: {root}")
     print(f"Shared token:       {cfg['token']}")
+    if cfg.get("shared_root"):
+        print(f"Shared store:       {cfg['shared_root']}  (public channels, group-accessible)")
 
     # Pointer handling (issue #39): never silently clobber an existing pointer to
     # a DIFFERENT hub — that breaks every other `hubcli` on the box (e.g. a test
@@ -500,13 +502,20 @@ def cmd_channels(args):
         print(json.dumps(chans, indent=2))
         return
     for c in chans:
-        print(f"#{c['name']:20} {c.get('description', '')}")
+        vis = c.get("visibility", "public")
+        tag = "🌐 [shared] " if vis == "public" else "🔒 [private]"
+        print(f"{tag} #{c['name']:18} {c.get('description', '')}")
 
 
 def cmd_mkchannel(args):
     store = _store(args)
-    name = store.ensure_channel(args.name, description=args.description or "")
-    print(f"Channel ready: #{name}")
+    # Visibility (#14): default PRIVATE (owner-only, chmod 0700 in the private
+    # store); --shared/--public puts it in the group-accessible shared store.
+    visibility = "public" if (args.shared or args.public) else "private"
+    name = store.ensure_channel(args.name, description=args.description or "",
+                                visibility=visibility)
+    where = "🌐 shared (ewsc_users group)" if visibility == "public" else "🔒 private (owner-only)"
+    print(f"Channel ready: #{name}  → {where}")
 
 
 # The labels the Agent Task issue form expects to exist in the target repo.
@@ -1199,6 +1208,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("init", help="Initialise a hub directory")
     sp.add_argument("--token", help="Shared token (generated if omitted)")
+    sp.add_argument("--shared-root", dest="shared_root",
+                    help="Group-accessible SHARED store for public channels (#14), "
+                         "e.g. /ewsc/ewsc/agents/agora")
     sp.add_argument("--set-default", dest="set_default", action="store_true",
                     help="Make this root the default in ~/.agent-hub-path even if "
                          "it already points to a different hub")
@@ -1349,9 +1361,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_channels)
 
-    sp = sub.add_parser("mkchannel", help="Create a channel")
+    sp = sub.add_parser("mkchannel", help="Create a channel (private by default; --shared for the ewsc_users group)")
     sp.add_argument("name")
     sp.add_argument("--description", "-d")
+    vis = sp.add_mutually_exclusive_group()
+    vis.add_argument("--shared", "--public", dest="shared", action="store_true",
+                     help="Group-accessible: lives in the shared store (ewsc_users can read+post)")
+    vis.add_argument("--private", action="store_true",
+                     help="Owner-only (chmod 0700; other ewsc_users denied) — the default")
     sp.set_defaults(func=cmd_mkchannel)
 
     sp = sub.add_parser("labels-init",
