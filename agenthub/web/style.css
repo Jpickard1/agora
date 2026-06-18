@@ -91,8 +91,9 @@ html, body { height: 100%; overflow: hidden; }
   flex: 1; padding: 11px 14px; border-radius: 8px; border: 0;
   background: var(--bg3); color: var(--text);
   font-family: inherit; font-size: inherit; line-height: 1.4;
-  resize: none; overflow-y: auto;
-  min-height: 42px; max-height: 200px;   /* grows with content, then scrolls */
+  height: 44px;            /* fixed size — does NOT grow as you type */
+  resize: vertical;        /* but you can drag it taller if you want */
+  overflow-y: auto;        /* long / multi-line text just scrolls inside */
 }
 .composer button { padding: 0 18px; height: 42px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; flex: none; }
 .composer.instruct textarea { outline: 2px solid var(--human); }

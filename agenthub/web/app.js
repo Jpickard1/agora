@@ -255,14 +255,8 @@ function scrollDown() {
 /* ---------------- composer ---------------- */
 const msgInput = $("#msg-input");
 
-// Auto-grow the textarea to fit its content (CSS caps it at max-height).
-function autoGrow() {
-  msgInput.style.height = "auto";
-  msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + "px";
-}
-msgInput.addEventListener("input", autoGrow);
-
-// Enter sends; Shift+Enter inserts a newline.
+// Enter sends; Shift+Enter inserts a newline. The box stays a fixed size and
+// just scrolls internally for long / multi-line messages.
 msgInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -275,7 +269,6 @@ $("#composer").addEventListener("submit", async (e) => {
   const text = msgInput.value.trim();
   if (!text) return;
   msgInput.value = "";
-  autoGrow();                 // shrink back to one line after sending
   const body = JSON.stringify({ text, author_name: state.name });
   try {
     if (state.view.type === "channel") {
@@ -288,7 +281,6 @@ $("#composer").addEventListener("submit", async (e) => {
     }
   } catch (err) {
     msgInput.value = text;    // restore on failure
-    autoGrow();
   }
 });
 
