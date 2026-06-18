@@ -262,7 +262,7 @@ function appendMessage(m, scroll = true) {
         ${m.host ? `<span class="host">${esc(m.host)}</span>` : ""}
         <span class="time">${fmtTime(m.ts)}</span>
       </div>
-      <div class="text">${esc(m.text)}</div>
+      <div class="text">${renderMarkdown(m.text)}</div>
       ${img}
     </div>`;
   box.appendChild(el);
@@ -369,6 +369,44 @@ function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
+}
+
+// Only http(s) links are allowed (no javascript:/data: URLs).
+function safeUrl(u) {
+  return /^https?:\/\//i.test(u) ? u : "#";
+}
+
+// Lightweight, safe Markdown for chat messages. Strategy: pull code spans and
+// links out into placeholders FIRST (so their contents are never re-processed),
+// HTML-escape everything else, then apply emphasis. Code/link HTML is built with
+// esc() so nothing user-supplied can inject markup. `.text` is white-space:
+// pre-wrap, so newlines render as-is — we don't add <br>.
+function renderMarkdown(src) {
+  src = String(src == null ? "" : src);
+  const tokens = [];
+  const stash = (html) => " " + (tokens.push(html) - 1) + " ";
+
+  // fenced code blocks ```...```
+  src = src.replace(/```([\s\S]*?)```/g, (_, c) =>
+    stash('<pre class="code-block"><code>' + esc(c.replace(/^\n/, "").replace(/\n$/, "")) + "</code></pre>"));
+  // inline code `...`
+  src = src.replace(/`([^`\n]+)`/g, (_, c) =>
+    stash('<code class="inline-code">' + esc(c) + "</code>"));
+  // markdown links [text](url)
+  src = src.replace(/\[([^\]]+)\]\(\s*(https?:\/\/[^\s)]+)\s*\)/g, (_, t, u) =>
+    stash('<a href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + esc(t) + "</a>"));
+  // bare URLs
+  src = src.replace(/(https?:\/\/[^\s<>()]+)/g, (u) =>
+    stash('<a href="' + esc(safeUrl(u)) + '" target="_blank" rel="noopener noreferrer">' + esc(u) + "</a>"));
+
+  // escape the remaining plain text, then apply emphasis (tag-only, safe)
+  src = esc(src);
+  src = src.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  src = src.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+  src = src.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+
+  // restore code/link HTML
+  return src.replace(/ (\d+) /g, (_, i) => tokens[+i]);
 }
 function fmtTime(ts) {
   const d = new Date(ts * 1000);
