@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -87,6 +88,68 @@ def ensure_manager_bridge(store, manager, pane, bridge_cmd, *,
     return True
 
 
+# -- task stall detector (issue #80) --------------------------------------
+# Distinct from the stale-CLAIM check (#8, owner went OFFLINE): this watches
+# tasks that are RUNNING with an ONLINE owner but show no progress — no new
+# commit referencing the issue AND no hub message from the owner — for a while,
+# i.e. likely stuck. One de-duped #general alert per stall; re-arms on activity.
+
+def _issue_number(ref):
+    m = re.search(r"#(\d+)", ref or "")
+    return m.group(1) if m else None
+
+
+def last_commit_ts(repo_dir, ref, *, run=subprocess.run):
+    """Unix ts of the most recent commit whose message references the task's
+    issue (#n) in `repo_dir`, or 0. Injectable `run` for tests (no real git)."""
+    n = _issue_number(ref)
+    if not repo_dir or not n:
+        return 0
+    try:
+        proc = run(["git", "-C", str(repo_dir), "log", "-1", "--format=%ct",
+                    "-E", "--grep", f"#{n}([^0-9]|$)"],
+                   capture_output=True, text=True, timeout=5)
+        return int((getattr(proc, "stdout", "") or "").strip() or 0)
+    except Exception:
+        return 0
+
+
+def owner_hub_ts(store, owner):
+    """Latest ts of a hub message authored by `owner` (channels + broadcast)."""
+    if not owner:
+        return 0
+    latest = 0.0
+    try:
+        for ch in store.list_channels():
+            for m in store.read_channel(ch["name"]):
+                if m.get("author") == owner or m.get("author_name") == owner:
+                    latest = max(latest, m.get("ts", 0) or 0)
+        for m in store.read_broadcast():
+            if m.get("author") == owner or m.get("author_name") == owner:
+                latest = max(latest, m.get("ts", 0) or 0)
+    except Exception:
+        pass
+    return latest
+
+
+def detect_stalled(running, now, threshold, alerted, activity_ts):
+    """Pure: from RUNNING tasks, return (to_alert, active_ids).
+      to_alert  = owned tasks whose last activity is older than `threshold`
+                  and not already in `alerted` (de-dup);
+      active_ids = tasks with recent activity (caller clears them from `alerted`
+                  so a task that goes quiet again re-alerts).
+    `activity_ts(task)` -> latest progress timestamp for that task."""
+    to_alert, active = [], set()
+    for t in running:
+        if not t.get("claimed_by"):
+            continue
+        if activity_ts(t) >= now - threshold:
+            active.add(t["id"])
+        elif t["id"] not in alerted:
+            to_alert.append(t)
+    return to_alert, active
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="agora-supervisor")
     ap.add_argument("--manager", default="manager", help="Manager agent id to keep alive + tick")
@@ -98,6 +161,10 @@ def main(argv=None):
     ap.add_argument("--tick-interval", type=float, default=180.0, help="manager issue-check cadence (s)")
     ap.add_argument("--stale-after", type=float, default=300.0,
                     help="flag a task stale if its owner has been offline this long (s)")
+    ap.add_argument("--stall-after", type=float, default=1800.0,
+                    help="alert if a RUNNING task shows no commit/hub activity this long (s)")
+    ap.add_argument("--repo-dir", default=None,
+                    help="git checkout to probe for task commits (default: this install)")
     ap.add_argument("--gh-sync", dest="gh_sync", action="store_true", default=True,
                     help="mirror task status changes to linked GitHub issues (default on)")
     ap.add_argument("--no-gh-sync", dest="gh_sync", action="store_false",
@@ -142,7 +209,11 @@ def main(argv=None):
           f"watch={args.watch_interval}s tick={args.tick_interval}s", flush=True)
     last_tick = 0.0
     last_update = time.time()  # wait one interval before the first auto-update
-    flagged_stale: set[str] = set()  # tasks we've already announced as stale
+    flagged_stale: set[str] = set()  # tasks we've already announced as stale (offline owner)
+    stall_alerted: set[str] = set()  # RUNNING tasks already flagged as stalled (#80)
+    repo_dir = args.repo_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print(f"[supervisor] stall-detector: alert after {int(args.stall_after)}s "
+          f"of no commit/hub activity (repo {repo_dir})", flush=True)
     while True:
         try:
             if ensure_server(args.port, serve_cmd):
@@ -176,6 +247,39 @@ def main(argv=None):
                         author_kind="system", host="supervisor")
                     print(f"[supervisor] flagged stale task {t['id']}", flush=True)
             flagged_stale = stale_ids  # forget tasks that recovered/were reassigned
+
+            # Task stall detector (issue #80): a RUNNING task with no commit
+            # referencing its issue AND no hub message from its owner in
+            # --stall-after seconds is likely stuck. One de-duped #general alert
+            # tagging owner+manager; re-arms when the task shows activity again.
+            running = [t for t in store.list_tasks() if t.get("status") == "running"]
+            _hub_ts_cache: dict = {}
+
+            def _activity_ts(t):
+                owner = t.get("claimed_by")
+                if owner not in _hub_ts_cache:
+                    _hub_ts_cache[owner] = owner_hub_ts(store, owner)
+                return max(t.get("updated_ts", 0) or 0,
+                           _hub_ts_cache[owner],
+                           last_commit_ts(repo_dir, t.get("ref")))
+
+            to_alert, active = detect_stalled(running, now, args.stall_after,
+                                              stall_alerted, _activity_ts)
+            for tid in active:
+                stall_alerted.discard(tid)       # activity resumed -> re-arm
+            for t in to_alert:
+                owner = t.get("claimed_by")
+                mins = int(args.stall_after // 60)
+                store.post_channel(
+                    "general",
+                    f"\U0001F6A8 stall: task {t['id']} (@{owner}) has shown no commit or hub "
+                    f"activity in >{mins}m \u2014 @{owner} still on it? @{args.manager} may "
+                    f"want to check in or reassign (hubcli task reassign {t['id']} <agent> "
+                    f"--author {args.manager}).",
+                    author="system:supervisor", author_name="supervisor",
+                    author_kind="system", host="supervisor", meta={"alert": True})
+                stall_alerted.add(t["id"])
+                print(f"[supervisor] flagged STALLED task {t['id']}", flush=True)
 
             # GitHub <-> task sync (issue #9): push any new status transitions to
             # the linked issues (idempotent; no-op for tasks without a ref).
