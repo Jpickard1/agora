@@ -133,3 +133,19 @@ html, body { height: 100%; overflow: hidden; }
   border-radius: 8px; cursor: pointer; border: 1px solid var(--border); }
 
 .empty { color: var(--muted); text-align: center; margin-top: 40px; }
+
+/* ---------- task board (agora-3 / issue #2) ---------- */
+.taskboard { display: flex; gap: 12px; padding: 14px 18px; height: 100%; overflow-x: auto; }
+.tb-col { flex: 1 0 200px; min-width: 200px; display: flex; flex-direction: column; gap: 8px; }
+.tb-col-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 2px 2px 6px; border-bottom: 1px solid var(--border); }
+.tb-count { background: var(--bg3); color: var(--text); border-radius: 10px; padding: 0 7px; font-size: 11px; margin-left: 4px; }
+.tb-empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
+.tb-card { background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--muted); border-radius: 8px; padding: 8px 10px; }
+.tb-card.tb-running { border-left-color: var(--human); }
+.tb-card.tb-done { border-left-color: var(--accent2); }
+.tb-card.tb-open { border-left-color: var(--accent); }
+.tb-card.tb-failed, .tb-card.tb-cancelled { border-left-color: var(--danger); }
+.tb-title { font-weight: 600; color: var(--text); margin-bottom: 4px; word-break: break-word; }
+.tb-meta { font-size: 11px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tb-id { font-family: ui-monospace, monospace; color: var(--text); }
+.tb-ref { background: var(--bg3); border-radius: 4px; padding: 0 5px; }

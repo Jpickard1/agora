@@ -18,6 +18,7 @@ const state = {
   view: { type: "channel", id: "general" },
   channels: [],
   agents: [],
+  tasks: [],        // durable task-board state (live via SSE)
   messages: [],     // currently displayed
   seenIds: new Set(),
   es: null,
@@ -115,6 +116,9 @@ function handleEvent(data) {
   } else if (data.type === "broadcast") {
     const m = data.message;
     if (state.view.type === "broadcast" || state.view.type === "firehose") appendMessage(m);
+  } else if (data.type === "tasks") {
+    state.tasks = data.tasks;
+    if (state.view.type === "taskboard") renderTaskBoard();
   }
 }
 
@@ -225,7 +229,46 @@ async function selectView(view) {
     $("#msg-input").placeholder = "Instruct ALL agents…";
     composer.classList.add("instruct");
     renderMessages(await api(`/api/broadcast?limit=200`));
+  } else if (view.type === "taskboard") {
+    $("#view-title").textContent = "📋 Task board";
+    $("#view-sub").textContent = "durable dispatch state — updates live";
+    composer.style.display = "none";
+    state.tasks = await api(`/api/tasks`);
+    renderTaskBoard();
   }
+}
+
+// Live task board: columns by status, each card shows id / title / assignee.
+function renderTaskBoard() {
+  const box = $("#messages");
+  const cols = [
+    { key: "open", label: "Open" },
+    { key: "claimed", label: "Claimed" },
+    { key: "running", label: "Running" },
+    { key: "done", label: "Done" },
+  ];
+  const other = (state.tasks || []).filter(
+    (t) => !cols.some((c) => c.key === t.status));
+  const colHtml = cols.map((c) => {
+    const items = (state.tasks || []).filter((t) => t.status === c.key);
+    const cards = items.map(taskCard).join("") ||
+      `<div class="tb-empty">—</div>`;
+    return `<div class="tb-col"><div class="tb-col-head">${c.label} <span class="tb-count">${items.length}</span></div>${cards}</div>`;
+  }).join("");
+  const extra = other.length
+    ? `<div class="tb-col"><div class="tb-col-head">Other <span class="tb-count">${other.length}</span></div>${other.map(taskCard).join("")}</div>`
+    : "";
+  box.innerHTML = `<div class="taskboard">${colHtml}${extra}</div>`;
+}
+
+function taskCard(t) {
+  const who = t.claimed_by ? `🤖 ${esc(t.claimed_by)}` : "unassigned";
+  const ref = t.ref ? `<span class="tb-ref">${esc(t.ref)}</span>` : "";
+  return `<div class="tb-card tb-${esc(t.status)}">
+    <div class="tb-title">${esc(t.title || t.id)}</div>
+    <div class="tb-meta"><span class="tb-id">${esc(t.id)}</span>${ref}</div>
+    <div class="tb-meta">${who}${t.cap ? ` · ${esc(t.cap)}` : ""}</div>
+  </div>`;
 }
 
 function renderMessages(msgs) {
@@ -350,6 +393,7 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
+$("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 
