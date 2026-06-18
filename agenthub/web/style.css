@@ -424,3 +424,15 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
   flex-direction: column; gap: 4px; background: var(--bg3); }
 .spawn-chan { display: flex; align-items: center; gap: 6px; font-size: 13px;
   color: var(--text); cursor: pointer; text-transform: none; letter-spacing: 0; }
+
+/* People / cross-user DMs (#95) */
+.people-pane { padding: 4px 2px; }
+.people-inbox { padding: 0 2px; }
+.people-user { margin-top: 10px; }
+.cdm-btn {
+  width: auto; margin-left: auto; flex: none;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text);
+  font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px;
+  cursor: pointer; white-space: nowrap;
+}
+.cdm-btn:hover { background: var(--accent); color: #fff; }
