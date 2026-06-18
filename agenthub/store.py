@@ -447,6 +447,50 @@ class HubStore:
         hits.sort(key=lambda h: (h["score"], h["ts"]), reverse=True)
         return hits[:limit] if limit else hits
 
+    def activity_digest(self, since_ts: float = 0.0,
+                        top_mentions: int = 5) -> dict[str, Any]:
+        """Cross-channel activity summary since `since_ts` (issue #79): per-channel
+        message count + top @mentions, broadcast count, and task status changes in
+        the window. Reads the store only.
+
+        Returns:
+          {since, channels: [{channel, messages, top_mentions: [[name,n],...]}],
+           broadcasts, task_changes: [{task, status, by, ts}], totals: {...}}
+        """
+        channels = []
+        total_msgs = 0
+        for ch in self.list_channels():
+            name = ch["name"]
+            msgs = self.read_channel(name, since_ts=since_ts)
+            counts: dict[str, int] = {}
+            for m in msgs:
+                for who in extract_mentions(m.get("text", "")):
+                    counts[who] = counts.get(who, 0) + 1
+            top = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top_mentions]
+            channels.append({"channel": name, "messages": len(msgs),
+                             "top_mentions": top})
+            total_msgs += len(msgs)
+        channels.sort(key=lambda c: c["messages"], reverse=True)
+
+        broadcasts = len(self.read_broadcast(since_ts=since_ts))
+
+        task_changes = []
+        for t in self.list_tasks():
+            for e in (t.get("events") or []):
+                if e.get("ts", 0) >= since_ts:
+                    task_changes.append({"task": t["id"], "status": e.get("status"),
+                                         "by": e.get("by"), "ts": e.get("ts", 0)})
+        task_changes.sort(key=lambda x: x["ts"])
+
+        return {
+            "since": since_ts,
+            "channels": channels,
+            "broadcasts": broadcasts,
+            "task_changes": task_changes,
+            "totals": {"messages": total_msgs, "broadcasts": broadcasts,
+                       "task_changes": len(task_changes)},
+        }
+
     def comm_graph(self, since_ts: float = 0.0) -> dict[str, Any]:
         """Directed communication graph derived from directed messages: for each
         inbox, edges are author -> recipient with a message count. Shows which

@@ -157,6 +157,49 @@ def cmd_broadcast(args):
         print(f"Broadcast to all agents ({m.id[:8]})")
 
 
+def _parse_duration(s: str) -> float:
+    """'24h'/'30m'/'7d'/'3600' -> seconds (bare number = seconds). 0 if empty."""
+    s = (s or "").strip().lower()
+    if not s:
+        return 0.0
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+    if s[-1] in units:
+        try:
+            return float(s[:-1]) * units[s[-1]]
+        except ValueError:
+            return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def cmd_digest(args):
+    store = _store(args)
+    seconds = _parse_duration(args.since)
+    since_ts = (time.time() - seconds) if seconds else 0.0
+    d = store.activity_digest(since_ts=since_ts)
+    if args.json:
+        print(json.dumps(d, indent=2))
+        return
+    window = args.since if seconds else "all time"
+    print(f"📊 Activity digest — {window}"
+          + (f" (since {_fmt_ts(since_ts)})" if seconds else "")
+          + f"  ·  {d['totals']['messages']} msgs, {d['totals']['broadcasts']} broadcasts, "
+          f"{d['totals']['task_changes']} task changes")
+    print("Channels:")
+    active = [c for c in d["channels"] if c["messages"]]
+    if not active:
+        print("  (no channel messages in window)")
+    for c in active:
+        ment = "  ".join(f"@{n}({k})" for n, k in c["top_mentions"])
+        print(f"  #{c['channel']:18} {c['messages']:4} msgs" + (f"   top: {ment}" if ment else ""))
+    if d["task_changes"]:
+        print(f"Task changes ({len(d['task_changes'])}):")
+        for e in d["task_changes"]:
+            print(f"  [{_fmt_ts(e['ts'])}] {e['task']} → {e['status']} by {e.get('by') or '?'}")
+
+
 def cmd_firehose(args):
     store = _store(args)
     msgs = store.firehose(limit=args.tail or 200)
@@ -1223,6 +1266,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tail", type=int, help="Only the last N items")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_firehose)
+
+    sp = sub.add_parser("digest", help="Cross-channel activity summary for a time window (#79)")
+    sp.add_argument("--since", default="24h", help="Window, e.g. 24h, 7d, 30m, 2w (default 24h; 'all' for everything)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_digest)
 
     # full-text search across channels/inboxes/broadcasts/tasks (issue #51)
     sp = sub.add_parser("search", help="Full-text search the hub")
