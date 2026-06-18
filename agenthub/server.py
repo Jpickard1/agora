@@ -145,6 +145,14 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.firehose(since_ts=since, limit=limit)
 
+    # -- @mentions: messages that mention a viewer (issue #52) -----------
+    @app.get("/api/mentions")
+    def mentions(name: str, since: float = 0.0, limit: int = 200,
+                 x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        from .store import collect_mentions
+        return collect_mentions(store, name, since_ts=since, limit=limit)
+
     # -- broadcast: one instruction to all (or by capability) ------------
     @app.get("/api/broadcast")
     def read_broadcast(since: float = 0.0, limit: int = 200,
