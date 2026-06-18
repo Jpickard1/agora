@@ -257,6 +257,82 @@ def cmd_mkchannel(args):
     print(f"Channel ready: #{name}")
 
 
+# -- tasks -----------------------------------------------------------------
+
+def _print_task(t: dict, verbose: bool = False) -> None:
+    badge = {"open": "○", "claimed": "◔", "running": "◑",
+             "done": "●", "failed": "✗", "cancelled": "⊘"}.get(t["status"], "•")
+    who = f" @{t['claimed_by']}" if t.get("claimed_by") else ""
+    ref = f"  [{t['ref']}]" if t.get("ref") else ""
+    cap = f"  cap={t['capability']}" if t.get("capability") else ""
+    print(f"{badge} {t['status']:9} {t['id']}{who}{cap}{ref}  {t.get('title','')}")
+    if verbose:
+        for e in t.get("events", []):
+            note = f" — {e['note']}" if e.get("note") else ""
+            print(f"    [{_fmt_ts(e['ts'])}] {e['status']} by {e.get('by','?')}{note}")
+
+
+def cmd_task_new(args):
+    store = _store(args)
+    t = store.create_task(
+        args.id, title=args.title or "", ref=args.ref or "",
+        brief=args.brief or "", capability=args.cap or "",
+        created_by=args.author or "manager",
+        labels=[c.strip() for c in (args.labels or "").split(",") if c.strip()])
+    print(f"Task ready: {t['id']} (status={t['status']})")
+    _print_task(t)
+
+
+def cmd_task_claim(args):
+    store = _store(args)
+    won = store.claim_task(args.id, args.author, note=args.note or "")
+    if won:
+        print(f"✓ Claimed {args.id} as @{args.author}")
+    else:
+        t = store.get_task(args.id)
+        if t is None:
+            print(f"✗ No such task: {args.id}", file=sys.stderr)
+            sys.exit(2)
+        print(f"✗ Already claimed by @{t.get('claimed_by')} — not yours.",
+              file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_task_update(args):
+    store = _store(args)
+    t = store.update_task(args.id, args.status, by=args.author or "",
+                          note=args.note or "")
+    if t is None:
+        print(f"✗ No such task: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    print(f"Task {t['id']} -> {t['status']}")
+
+
+def cmd_task_list(args):
+    store = _store(args)
+    tasks = store.list_tasks(status=args.status)
+    if args.json:
+        print(json.dumps(tasks, indent=2))
+        return
+    if not tasks:
+        print("(no tasks)" + (f" with status={args.status}" if args.status else ""))
+        return
+    for t in tasks:
+        _print_task(t)
+
+
+def cmd_task_show(args):
+    store = _store(args)
+    t = store.get_task(args.id)
+    if t is None:
+        print(f"✗ No such task: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    if args.json:
+        print(json.dumps(t, indent=2))
+        return
+    _print_task(t, verbose=True)
+
+
 def cmd_doctor(args):
     root = resolve_root(args.root)
     store = HubStore(root)
@@ -546,6 +622,44 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     sp.add_argument("--description", "-d")
     sp.set_defaults(func=cmd_mkchannel)
+
+    # tasks: durable work dispatch (manager creates, workers claim/update)
+    sp = sub.add_parser("task", help="Durable work tasks (new/claim/update/list/show)")
+    tsub = sp.add_subparsers(dest="task_cmd", required=True)
+
+    tp = tsub.add_parser("new", help="Create/dispatch a task (idempotent)")
+    tp.add_argument("id", help="Task id, e.g. 'MGB-main#42'")
+    tp.add_argument("--title")
+    tp.add_argument("--ref", help="External reference, e.g. 'Jpickard1/MGB-main#42'")
+    tp.add_argument("--brief", help="Short brief for the worker")
+    tp.add_argument("--cap", help="Capability/skill the task needs")
+    tp.add_argument("--labels", help="Comma-separated labels")
+    tp.add_argument("--author", help="Who created it (default: manager)")
+    tp.set_defaults(func=cmd_task_new)
+
+    tp = tsub.add_parser("claim", help="Atomically claim a task (first-wins)")
+    tp.add_argument("id")
+    tp.add_argument("--author", required=True, help="Claiming agent id")
+    tp.add_argument("--note")
+    tp.set_defaults(func=cmd_task_claim)
+
+    tp = tsub.add_parser("update", help="Append a status event to a task")
+    tp.add_argument("id")
+    tp.add_argument("--status", required=True,
+                    choices=["running", "done", "failed", "cancelled", "open"])
+    tp.add_argument("--author", help="Agent reporting the update")
+    tp.add_argument("--note")
+    tp.set_defaults(func=cmd_task_update)
+
+    tp = tsub.add_parser("list", help="List tasks (durable dispatch state)")
+    tp.add_argument("--status", help="Filter by current status")
+    tp.add_argument("--json", action="store_true")
+    tp.set_defaults(func=cmd_task_list)
+
+    tp = tsub.add_parser("show", help="Show one task + its event history")
+    tp.add_argument("id")
+    tp.add_argument("--json", action="store_true")
+    tp.set_defaults(func=cmd_task_show)
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
