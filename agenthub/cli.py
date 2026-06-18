@@ -168,6 +168,26 @@ def cmd_firehose(args):
         print(f"[{_fmt_ts(m['ts'])}] {where:12} {m.get('author_name')}: {m['text']}")
 
 
+def cmd_search(args):
+    store = _store(args)
+    channels = ([c.strip() for c in args.channel.split(",") if c.strip()]
+                if args.channel else None)
+    hits = store.search_messages(args.query, channels=channels,
+                                 limit=args.limit or 50,
+                                 include_tasks=not args.no_tasks)
+    if args.json:
+        print(json.dumps(hits, indent=2))
+        return
+    if not hits:
+        print(f"(no matches for '{args.query}')")
+        return
+    icon = {"channel": "#", "inbox": "→", "broadcast": "📢", "task": "📋"}
+    print(f"{len(hits)} match(es) for '{args.query}':")
+    for h in hits:
+        where = f"{icon.get(h['source'], '')}{h['where']}"
+        print(f"[{_fmt_ts(h['ts'])}] {where:16} {h['author']}: {h['snippet']}")
+
+
 def cmd_prune(args):
     store = _store(args)
     max_age = args.max_age_days * 86400 if args.max_age_days else None
@@ -1127,6 +1147,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tail", type=int, help="Only the last N items")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_firehose)
+
+    # full-text search across channels/inboxes/broadcasts/tasks (issue #51)
+    sp = sub.add_parser("search", help="Full-text search the hub")
+    sp.add_argument("query", help="Search terms")
+    sp.add_argument("--channel", help="Restrict to channel(s), comma-separated")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--no-tasks", dest="no_tasks", action="store_true",
+                    help="Exclude task history from results")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("read", help="Read a channel")
     sp.add_argument("-c", "--channel", default="general")
