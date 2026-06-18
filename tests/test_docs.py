@@ -19,6 +19,12 @@ def _read(rel):
         return f.read()
 
 
+# Multi-user / own-server invariants (issue #105).
+USER_DOCS = ("README.md", "SETUP.md", "QUICKSTART.md",
+             "docs/multi-user.md", "docs/windows-quickstart.md")
+SHARED_ROOT = "/ewsc/ewsc/agents/agora"
+
+
 def _real_subcommands():
     """The actual top-level hubcli subcommands, scraped from argparse help."""
     from agenthub import cli
@@ -91,6 +97,52 @@ def test_portable_default_documented():
 def test_new_machine_section_present():
     assert "Installing on a new machine" in _read("README.md")
     assert "Installing on a new machine" in _read("SETUP.md")
+
+
+def test_run_your_own_server_is_documented():
+    """#105: every user-facing setup doc tells a setup agent to run its OWN server."""
+    for rel in USER_DOCS:
+        low = _read(rel).lower()
+        assert "run your own" in low or "your own server" in low, \
+            f"{rel}: missing 'run your own server' guidance"
+
+
+def test_shared_root_path_is_explicit():
+    """#105: the literal shared hub path is stated so a setup agent uses it verbatim."""
+    for rel in USER_DOCS:
+        assert SHARED_ROOT in _read(rel), f"{rel}: missing shared root {SHARED_ROOT}"
+
+
+def test_no_topology_b_token_sharing():
+    """#105: no 'share/reuse the token' guidance — each user runs their own hub
+    with their own token. (The DON'T phrasing 'reuse another user's token' is fine.)"""
+    bad = ("reuse its token", "shared token", "shared secret",
+           "share these with every server", "reuse the token")
+    for rel in ("README.md", "SETUP.md", "QUICKSTART.md", "docs/windows-quickstart.md"):
+        low = _read(rel).lower()
+        for phrase in bad:
+            assert phrase not in low, f"{rel}: topology-B phrase present: {phrase!r}"
+
+
+def test_init_uses_global_root_flag():
+    """`--root` is a GLOBAL flag, so 'hubcli init --root ...' is invalid argparse;
+    the correct order is 'hubcli --root <dir> init'. Guard docs + connect-help from
+    regressing (this was a real pre-existing bug fixed in #105)."""
+    from agenthub import cli
+    targets = {rel: _read(rel) for rel in USER_DOCS}
+    targets["CONNECT_PROMPT"] = cli.CONNECT_PROMPT
+    for name, txt in targets.items():
+        assert "init --root" not in txt, \
+            f"{name}: wrong flag order 'init --root' (use '--root <dir> init')"
+
+
+def test_connect_help_tells_agent_to_run_own_server():
+    """#105: the connect-help paste-prompt (what a fresh setup agent reads) carries
+    the own-server message + the shared root."""
+    from agenthub import cli
+    prompt = cli.CONNECT_PROMPT
+    assert "RUN YOUR OWN SERVER" in prompt
+    assert SHARED_ROOT in prompt
 
 
 def run():

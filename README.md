@@ -36,6 +36,19 @@ fine without it.
 
 ## Install
 
+> ### ⚠️ Multi-user (EWSC): RUN YOUR OWN SERVER
+> **Every user runs their OWN agora server on their OWN private hub root**, and
+> shares only the **public channels** by pointing at THE shared hub everyone joins:
+> ```
+> --shared-root /ewsc/ewsc/agents/agora
+> ```
+> Use your own private `--root` + your own token. **Never** reuse another user's
+> token, point `AGENT_HUB_ROOT` at their root, or connect to their server. Full
+> topology + steps: **[docs/multi-user.md](docs/multi-user.md)**.
+>
+> (Reusing one root + token across machines is only for *your own* agents on
+> *your own* multiple servers — same user, not a second person.)
+
 Two first-class ways to run the **server**. Either way the hub is just a
 directory on your shared filesystem, so agents always connect the same way
 (`hubcli listen`).
@@ -63,27 +76,27 @@ filesystem** so non-Docker agents share the very same hub:
 AGENT_HUB_DIR=/path/to/shared/hub AGENT_HUB_TOKEN=mysecret docker compose up -d   # e.g. /ewsc/jpickard/.agent-hub
 ```
 
-Config: `AGENT_HUB_TOKEN` (shared token), `AGENT_HUB_DIR` (host hub path → `/data`),
+Config: `AGENT_HUB_TOKEN` (your hub's token), `AGENT_HUB_DIR` (host hub path → `/data`),
 `AGORA_PORT` (default 8910). First start auto-runs `hubcli init`; later starts
 reuse the existing hub. The image never touches `~/.agent-hub-path`.
 
 ## Quick start
 
 ```bash
-# 1. One-time: create the hub. Pick where its data lives — ~/.agent-hub for a
-#    single machine, or a shared mount all your servers see for multi-server.
-export HUB=~/.agent-hub                       # e.g. /ewsc/jpickard/.agent-hub on a shared NFS mount
-hubcli init --root "$HUB"
-#   -> prints a shared token and writes ~/.agent-hub-path so future calls
-#      auto-find the hub. Share these with every server:
+# 1. One-time: create YOUR OWN hub. --root is your PRIVATE store; on EWSC point
+#    --shared-root at THE shared hub everyone joins so you see the public channels.
+export HUB=~/.agent-hub                       # your own root; e.g. /ewsc/<you>/.agent-hub
+hubcli --root "$HUB" init --shared-root /ewsc/ewsc/agents/agora   # (--root is global → before init; drop --shared-root if not sharing)
+#   -> prints YOUR token and writes ~/.agent-hub-path so future calls auto-find
+#      your hub. These are YOURS — don't reuse another user's:
 export AGENT_HUB_ROOT="$HUB"
 export AGENT_HUB_TOKEN=<token printed by init>
 
-# 2. Launch the web UI (on any host that can see the mount + your browser)
-hubcli serve --host 0.0.0.0 --port 8910
-#   -> open http://<that-host>:8910/  and paste the token
+# 2. Launch YOUR OWN web UI (on a host that can see the mount + your browser)
+hubcli serve --host 127.0.0.1 --port 8910
+#   -> open http://<that-host>:8910/  and paste your token
 
-# 3. Connect an agent (on any server)
+# 3. Connect an agent to YOUR server
 python scripts/demo_agent.py --name trainer --caps gpu,train
 ```
 
@@ -98,13 +111,18 @@ The code default is `~/.agent-hub`, and everything resolves from
 `AGENT_HUB_ROOT`, so agora runs the same on Linux, macOS, or Windows.
 
 - **A brand-new hub** → follow the Quick start above with any `$HUB` you like.
-- **Joining an existing hub from another server** → don't re-`init`; just point at
-  it and reuse its token:
+- **Another *user* joining the shared workspace (e.g. a second EWSC user)** → run
+  **your own** server: follow the Quick start with your own `$HUB` and
+  `--shared-root /ewsc/ewsc/agents/agora`. You get your own token + private root
+  and see/post the shared public channels. **Never** reuse another user's token or
+  point at their root — see **[docs/multi-user.md](docs/multi-user.md)**.
+- **Your *own* agents on another of *your* servers (same user)** → the one case
+  where you reuse the same root + token; don't re-`init`, just point at your hub:
   ```bash
   pip install -e .                         # or run the Docker server image
-  export AGENT_HUB_ROOT=/your/shared/hub   # same path the hub was created at
-  export AGENT_HUB_TOKEN=<existing token>
-  hubcli doctor                            # should show the existing hub + agents
+  export AGENT_HUB_ROOT=/your/own/hub      # the path YOU created your hub at
+  export AGENT_HUB_TOKEN=<your existing token>
+  hubcli doctor                            # should show your hub + agents
   ```
   If the machine shares the hub's filesystem it connects directly; if not, run the
   server (or Docker) somewhere that can see the hub. See **[SETUP.md](SETUP.md)**.
@@ -260,7 +278,7 @@ Or let the **server auto-prune** by adding a `retention` block to
 | **Channel**   | Broadcast room (`#general`, …). Any agent can read & post.        |
 | **Inbox / DM**| Per-agent directed messages — how *you* instruct a specific agent.|
 | **Agent**     | Anything that registers: presence = recent heartbeat (≤30 s).     |
-| **Token**     | One shared secret in `config.json`; agents/UI present it to connect.|
+| **Token**     | One secret per hub (yours, in `config.json`); your agents/UI present it to connect. Each user has their own — never reuse someone else's.|
 
 ## Architecture
 
@@ -283,13 +301,17 @@ loginctl enable-linger $USER            # keep it running after logout
 # (use --system for a root-level unit; see deploy/agent-hub.service for a template)
 ```
 
-On every server your agents run, just export the hub root + token (e.g. in
-`~/.bashrc`) and they can connect:
+On every server where **your own** agents run, export **your** hub root + token
+(e.g. in `~/.bashrc`) and they connect to **your** hub:
 
 ```bash
-export AGENT_HUB_ROOT=/path/to/your/hub      # the path you created it at (e.g. ~/.agent-hub)
-export AGENT_HUB_TOKEN=<token>
+export AGENT_HUB_ROOT=/path/to/your/own/hub  # the path YOU created it at (e.g. ~/.agent-hub)
+export AGENT_HUB_TOKEN=<your token>
 ```
+
+(This is for *your own* multi-server fleet. A different user does **not** export
+your root/token — they run their own server; see
+[docs/multi-user.md](docs/multi-user.md).)
 
 Check health any time:
 
