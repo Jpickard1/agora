@@ -650,3 +650,56 @@ class HubStore:
             out.append(t)
         out.sort(key=lambda t: t.get("updated_ts") or 0, reverse=True)
         return out
+
+    def release_task(self, task_id: str, by: str, force: bool = False) -> bool:
+        """Drop a task's claim so it returns to 'open' and can be reclaimed.
+        Only the current owner may release it, unless `force` (manager override).
+        Returns True if released (or already unclaimed), False if `by` isn't the
+        owner and not forced, or the task is unknown."""
+        tid = _safe_name(task_id)
+        tdir = self.tasks_dir / tid
+        if not (tdir / "task.json").exists():
+            return False
+        claim = _read_json(tdir / "claim.json")
+        if claim is None:
+            return True  # already open — nothing to release
+        if not force and claim.get("agent") != _safe_name(by):
+            return False  # can't release someone else's claim
+        try:
+            (tdir / "claim.json").unlink()
+        except OSError:
+            pass
+        self._append_task_event(tid, "open", by=by, note="released")
+        return True
+
+    def reassign_task(self, task_id: str, new_agent: str, by: str = "",
+                      note: str = "") -> dict[str, Any] | None:
+        """Manager override: move a task's claim to `new_agent` regardless of the
+        current owner (e.g. to recover a stale/abandoned task). Returns the task,
+        or None if unknown."""
+        tid = _safe_name(task_id)
+        tdir = self.tasks_dir / tid
+        if not (tdir / "task.json").exists():
+            return None
+        _atomic_write_json(tdir / "claim.json", {
+            "task_id": tid,
+            "agent": _safe_name(new_agent),
+            "claimed_ts": _now(),
+            "note": note or f"reassigned by {by}",
+        })
+        self._append_task_event(tid, "claimed", by=new_agent,
+                                note=note or f"reassigned by {by}")
+        return self.get_task(tid)
+
+    def stale_tasks(self, offline_window: float = 300.0) -> list[dict[str, Any]]:
+        """Tasks that are claimed/running but whose owner has not heart-beat
+        within `offline_window` seconds — i.e. likely abandoned by a dead agent
+        and eligible for reassignment. Terminal tasks are never stale."""
+        online = {a["id"] for a in self.list_agents(online_window=offline_window)
+                  if a.get("online")}
+        stale = []
+        for t in self.list_tasks():
+            owner = t.get("claimed_by")
+            if owner and t["status"] not in TASK_TERMINAL and owner not in online:
+                stale.append(t)
+        return stale

@@ -61,6 +61,8 @@ def main(argv=None):
     ap.add_argument("--channel", default="general")
     ap.add_argument("--watch-interval", type=float, default=15.0, help="liveness check cadence (s)")
     ap.add_argument("--tick-interval", type=float, default=180.0, help="manager issue-check cadence (s)")
+    ap.add_argument("--stale-after", type=float, default=300.0,
+                    help="flag a task stale if its owner has been offline this long (s)")
     args = ap.parse_args(argv)
 
     root = str(resolve_root(args.root))
@@ -76,6 +78,7 @@ def main(argv=None):
     print(f"[supervisor] up — port={args.port} manager={args.manager} "
           f"watch={args.watch_interval}s tick={args.tick_interval}s", flush=True)
     last_tick = 0.0
+    flagged_stale: set[str] = set()  # tasks we've already announced as stale
     while True:
         try:
             if not _server_ok(args.port):
@@ -97,6 +100,22 @@ def main(argv=None):
                     author="system:supervisor", author_name="supervisor",
                     author_kind="system", host="supervisor")
                 print("[supervisor] ticked manager", flush=True)
+
+            # Stale-claim recovery: a task whose owner went offline is likely
+            # abandoned — tell the manager once so it can reassign (issue #8).
+            stale = store.stale_tasks(offline_window=args.stale_after)
+            stale_ids = {t["id"] for t in stale}
+            for t in stale:
+                if t["id"] not in flagged_stale:
+                    store.post_inbox(
+                        args.manager,
+                        f"⚠️ stale task {t['id']} — owner @{t.get('claimed_by')} has been "
+                        f"offline >{int(args.stale_after)}s. Reassign with: "
+                        f"hubcli task reassign {t['id']} <agent> --author manager",
+                        author="system:supervisor", author_name="supervisor",
+                        author_kind="system", host="supervisor")
+                    print(f"[supervisor] flagged stale task {t['id']}", flush=True)
+            flagged_stale = stale_ids  # forget tasks that recovered/were reassigned
         except Exception as e:
             print(f"[supervisor] error: {e}", flush=True)
         time.sleep(args.watch_interval)
