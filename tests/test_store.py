@@ -69,6 +69,20 @@ def test_presence():
     assert s.list_agents()[0]["online"] is False
 
 
+def test_forget_agent():
+    s = fresh()
+    s.register_agent("t1", "trainer", capabilities=["gpu"])
+    s.register_agent("t2", "tester")
+    assert len(s.list_agents()) == 2
+    # forget an existing agent -> True, dropped from the roster
+    assert s.forget_agent("t1") is True
+    ids = [a["id"] for a in s.list_agents()]
+    assert ids == ["t2"]
+    # forgetting again / unknown agent -> False
+    assert s.forget_agent("t1") is False
+    assert s.forget_agent("nope") is False
+
+
 def test_broadcast_reaches_all():
     s = fresh()
     s.post_broadcast("all hands: pause", "human:jpic", "jpic")

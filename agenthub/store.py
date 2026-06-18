@@ -537,6 +537,15 @@ class HubStore:
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         return _read_json(self.agents_dir / f"{_safe_name(agent_id)}.json")
 
+    def forget_agent(self, agent_id: str) -> bool:
+        """Remove an agent's record entirely (drops it from the roster). Returns
+        True if a record existed and was removed, False if there was none."""
+        path = self.agents_dir / f"{_safe_name(agent_id)}.json"
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
     # -- tasks (durable work dispatch) ------------------------------------
     #
     # The manager turns each dispatchable unit of work (e.g. a GitHub issue)

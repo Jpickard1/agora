@@ -252,6 +252,15 @@ def cmd_agents(args):
         print(f"{dot:8} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
 
 
+def cmd_forget(args):
+    store = _store(args)
+    if store.forget_agent(args.agent):
+        print(f"Forgot agent: {args.agent}")
+        return 0
+    print(f"No such agent: {args.agent}", file=sys.stderr)
+    return 1
+
+
 def cmd_channels(args):
     store = _store(args)
     chans = store.list_channels()
@@ -696,6 +705,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_agents)
+
+    sp = sub.add_parser("forget", help="Remove an agent record from the roster")
+    sp.add_argument("agent", help="Agent id to forget")
+    sp.set_defaults(func=cmd_forget)
 
     sp = sub.add_parser("channels", help="List channels")
     sp.add_argument("--json", action="store_true")
