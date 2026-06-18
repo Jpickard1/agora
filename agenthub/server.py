@@ -187,6 +187,21 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- agent web access (issue #19) -----------------------------------
+    @app.get("/api/web/fetch")
+    def web_fetch(url: str, timeout: float = 12.0,
+                  x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        from . import web_access as web
+        return web.fetch_url(url, timeout=timeout)
+
+    @app.get("/api/web/search")
+    def web_search(q: str, backend: str | None = None, limit: int = 5,
+                   x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        from . import web_access as web
+        return web.search(q, backend=backend, limit=limit)
+
     # -- projects (issue #22) -------------------------------------------
     @app.get("/api/projects")
     def projects_list(x_hub_token: str | None = Header(default=None)):
