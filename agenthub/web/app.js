@@ -138,6 +138,17 @@ async function refreshAgents() {
   renderDmList();
 }
 
+// Map an agent record to a roster status badge. Offline always wins (a crashed
+// bridge can leave a stale "working" status), otherwise use the bridge-reported
+// status: working | waiting | listening (default for an online agent).
+function agentStatus(a) {
+  if (!a.online) return { label: "offline", cls: "st-offline" };
+  const s = (a.status || "").toLowerCase();
+  if (s === "working") return { label: "working", cls: "st-working" };
+  if (s === "waiting") return { label: "waiting", cls: "st-waiting" };
+  return { label: "listening", cls: "st-listening" };
+}
+
 function renderAgents() {
   const ul = $("#agent-list");
   ul.innerHTML = "";
@@ -150,10 +161,17 @@ function renderAgents() {
     const li = document.createElement("li");
     li.className = "agent";
     const caps = (a.capabilities || []).join(", ");
+    const sess = a.tmux_session || (a.extra && a.extra.tmux_session) || "";
+    const st = agentStatus(a);
     li.innerHTML = `
-      <div class="row1"><span class="pdot ${a.online ? "online" : ""}"></span><span class="aname">${esc(a.name)}</span></div>
-      <div class="ameta">${esc(a.host || "")} · ${a.online ? "online" : rel(a.age)}</div>
-      ${a.activity ? `<div class="ameta" style="font-style:italic">▸ ${esc(a.activity)}</div>` : ""}
+      <div class="row1">
+        <span class="pdot ${a.online ? "online" : ""}"></span>
+        <span class="aname">${esc(a.name)}</span>
+        <span class="status-badge ${st.cls}">${st.label}</span>
+      </div>
+      ${a.activity ? `<div class="ameta work">▸ ${esc(a.activity)}</div>` : ""}
+      <div class="ameta">🖥 ${esc(a.host || "?")}${sess ? ` · ⧉ ${esc(sess)}` : ""}</div>
+      <div class="ameta">${a.online ? "seen just now" : "seen " + rel(a.age)}</div>
       ${caps ? `<div class="caps">${esc(caps)}</div>` : ""}`;
     li.title = "Click to send a direct instruction";
     li.onclick = () => selectView({ type: "agent", id: a.id, name: a.name });

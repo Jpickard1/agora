@@ -66,9 +66,17 @@ html, body { height: 100%; overflow: hidden; }
 .agent .row1 { display: flex; align-items: center; gap: 7px; width: 100%; }
 .agent .pdot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
 .agent .pdot.online { background: var(--accent2); }
-.agent .aname { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+.agent .aname { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; flex: 1; }
 .agent .ameta { font-size: 11px; color: var(--muted); padding-left: 16px; }
+.agent .ameta.work { font-style: italic; color: var(--text); }
 .agent .caps { font-size: 10px; color: var(--accent); padding-left: 16px; }
+
+/* roster status badge */
+.status-badge { margin-left: auto; flex: none; font-size: 10px; padding: 1px 7px; border-radius: 10px; font-weight: 700; text-transform: lowercase; }
+.status-badge.st-listening { background: rgba(67,181,129,.18); color: var(--accent2); }
+.status-badge.st-working { background: rgba(250,166,26,.20); color: var(--human); }
+.status-badge.st-waiting { background: rgba(88,101,242,.22); color: #97a5ff; }
+.status-badge.st-offline { background: var(--bg3); color: var(--muted); }
 
 /* ---------- main ---------- */
 .topbar { padding: 14px 18px; border-bottom: 1px solid var(--border); }
