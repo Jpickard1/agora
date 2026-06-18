@@ -20,7 +20,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -282,6 +284,15 @@ def cmd_usage(args):
         print("(no agents registered)")
 
 
+def cmd_forget(args):
+    store = _store(args)
+    if store.forget_agent(args.agent):
+        print(f"Forgot agent: {args.agent}")
+        return 0
+    print(f"No such agent: {args.agent}", file=sys.stderr)
+    return 1
+
+
 def cmd_channels(args):
     store = _store(args)
     chans = store.list_channels()
@@ -296,6 +307,45 @@ def cmd_mkchannel(args):
     store = _store(args)
     name = store.ensure_channel(args.name, description=args.description or "")
     print(f"Channel ready: #{name}")
+
+
+# The labels the Agent Task issue form expects to exist in the target repo.
+# (name, color, description) — kept here so `labels-init` is the single source.
+AGENT_TASK_LABELS = [
+    ("ready", "0e8a16", "Task is ready for an agent to pick up now"),
+    ("agent-task", "1d76db", "Filed via the Agent Task form; routed by the manager"),
+    ("parked", "fbca04", "Filed but intentionally not dispatched yet"),
+]
+
+
+def cmd_labels_init(args):
+    """Idempotently create the Agent Task form's labels in a GitHub repo via the
+    `gh` CLI. Safe to re-run: labels that already exist are left untouched."""
+    repo = args.repo or os.environ.get("AGORA_GH_REPO")
+    if not repo:
+        print("error: pass --repo owner/name (or set AGORA_GH_REPO)", file=sys.stderr)
+        return 2
+    if shutil.which("gh") is None:
+        print("error: the GitHub CLI ('gh') is required and was not found on PATH",
+              file=sys.stderr)
+        return 2
+    created, existed, failed = 0, 0, 0
+    for name, color, desc in AGENT_TASK_LABELS:
+        r = subprocess.run(
+            ["gh", "label", "create", name, "--repo", repo,
+             "--color", color, "--description", desc],
+            capture_output=True, text=True)
+        if r.returncode == 0:
+            created += 1
+            print(f"  ✓ created '{name}'")
+        elif "already exists" in (r.stderr + r.stdout).lower():
+            existed += 1
+            print(f"  • '{name}' already exists")
+        else:
+            failed += 1
+            print(f"  ✗ '{name}': {r.stderr.strip() or 'failed'}", file=sys.stderr)
+    print(f"labels-init on {repo}: {created} created, {existed} existing, {failed} failed")
+    return 1 if failed else 0
 
 
 # -- tasks -----------------------------------------------------------------
@@ -693,6 +743,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_usage)
 
+    sp = sub.add_parser("forget", help="Remove an agent record from the roster")
+    sp.add_argument("agent", help="Agent id to forget")
+    sp.set_defaults(func=cmd_forget)
+
     sp = sub.add_parser("channels", help="List channels")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_channels)
@@ -701,6 +755,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     sp.add_argument("--description", "-d")
     sp.set_defaults(func=cmd_mkchannel)
+
+    sp = sub.add_parser("labels-init",
+                        help="Create the Agent Task form's labels in a GitHub repo (idempotent)")
+    sp.add_argument("--repo", help="owner/name (defaults to $AGORA_GH_REPO)")
+    sp.set_defaults(func=cmd_labels_init)
 
     # tasks: durable work dispatch (manager creates, workers claim/update)
     sp = sub.add_parser("task", help="Durable work tasks (new/claim/update/list/show)")
