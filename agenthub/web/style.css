@@ -230,3 +230,32 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .utable .pdot.online { background: var(--accent2); }
 .utable .ut-act { color: var(--human); font-size: 11px; }
 .unote { color: var(--muted); font-size: 11px; margin-top: 14px; font-style: italic; }
+
+/* ---- knowledge base (issue #25) ---- */
+.kb{padding:14px 18px;overflow-y:auto;height:100%}
+.kb-bar{display:flex;gap:8px;margin-bottom:10px}
+.kb-bar #kb-search{flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text)}
+.kb-bar #kb-add-btn{padding:0 14px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
+.kb-filter{font-size:12px;color:var(--muted);margin-bottom:8px}
+.kb-filter #kb-clear-tag{cursor:pointer;color:var(--accent);margin-left:6px}
+.kb-tagcloud{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.kb-tag{font-size:12px;background:var(--bg3);color:var(--text);border-radius:12px;padding:2px 10px;cursor:pointer;border:1px solid transparent}
+.kb-tag em{color:var(--muted);font-style:normal}
+.kb-tag.on{border-color:var(--accent);color:var(--accent)}
+.kb-form{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;flex-direction:column;gap:8px}
+.kb-form input,.kb-form select,.kb-form textarea{padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font:inherit;width:100%}
+.kb-form-row{display:flex;gap:8px}
+.kb-form-row #kb-f-kind{flex:0 0 110px}
+.kb-form-actions{display:flex;justify-content:flex-end;gap:8px}
+.kb-form-actions button{padding:7px 14px;border:0;border-radius:6px;background:var(--accent);color:#fff;cursor:pointer}
+.kb-form-actions .btn-secondary{background:var(--bg3);color:var(--text)}
+.kb-list{display:flex;flex-direction:column;gap:10px}
+.kb-entry{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px}
+.kb-head{display:flex;align-items:center;gap:8px}
+.kb-title{font-weight:600}
+.kb-tags{color:var(--muted);font-size:12px;margin-left:auto}
+.kb-del{background:none;border:0;color:var(--muted);cursor:pointer;font-size:13px}
+.kb-del:hover{color:var(--danger)}
+.kb-url{display:block;font-size:13px;margin-top:4px;color:var(--accent);word-break:break-all}
+.kb-body{margin-top:8px;font-size:13px}
+.kb-meta{margin-top:8px;font-size:11px;color:var(--muted)}
