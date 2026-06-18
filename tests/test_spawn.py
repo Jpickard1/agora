@@ -30,18 +30,29 @@ def test_local_plan_uses_argv_arrays():
     assert p["delayed"][1] == ["tmux", "send-keys", "-t", "trainer", "Enter"]
 
 
-def test_claude_bin_prefers_claude2(monkeypatch):
-    # explicit override always wins
-    monkeypatch.setenv("AGORA_CLAUDE_BIN", "/custom/claude")
-    assert spawn._claude_bin() == "/custom/claude"
-    monkeypatch.delenv("AGORA_CLAUDE_BIN", raising=False)
-    # prefer claude2 when it's on PATH...
-    monkeypatch.setattr(spawn.shutil, "which",
-                        lambda n: "/usr/bin/claude2" if n == "claude2" else None)
-    assert spawn._claude_bin() == "claude2"
-    # ...and fall back to claude when claude2 is absent
-    monkeypatch.setattr(spawn.shutil, "which", lambda n: None)
-    assert spawn._claude_bin() == "claude"
+def test_claude_bin_prefers_claude2():
+    # Manual env/attr save+restore so this passes under BOTH pytest and the
+    # repo's plain runner (which calls each test with no args — a monkeypatch
+    # fixture param would TypeError there).
+    saved_env = os.environ.get("AGORA_CLAUDE_BIN")
+    saved_which = spawn.shutil.which
+    try:
+        # explicit override always wins
+        os.environ["AGORA_CLAUDE_BIN"] = "/custom/claude"
+        assert spawn._claude_bin() == "/custom/claude"
+        os.environ.pop("AGORA_CLAUDE_BIN", None)
+        # prefer claude2 when it's on PATH...
+        spawn.shutil.which = lambda n: "/usr/bin/claude2" if n == "claude2" else None
+        assert spawn._claude_bin() == "claude2"
+        # ...and fall back to claude when claude2 is absent
+        spawn.shutil.which = lambda n: None
+        assert spawn._claude_bin() == "claude"
+    finally:
+        spawn.shutil.which = saved_which
+        if saved_env is None:
+            os.environ.pop("AGORA_CLAUDE_BIN", None)
+        else:
+            os.environ["AGORA_CLAUDE_BIN"] = saved_env
 
 
 def test_session_defaults_to_name_and_is_sanitised():
