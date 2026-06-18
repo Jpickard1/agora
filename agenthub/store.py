@@ -575,7 +575,9 @@ class HubStore:
 
     def search_messages(self, query: str, channels: list[str] | None = None,
                         since_ts: float = 0.0, limit: int | None = 50,
-                        include_tasks: bool = True) -> list[dict[str, Any]]:
+                        include_tasks: bool = True,
+                        author: str | None = None,
+                        include_archive: bool = False) -> list[dict[str, Any]]:
         """Full-text search across channel messages, inboxes, broadcasts, and
         (optionally) task history. Ranks by term hits — message text weighs most,
         author less — newest-first on ties, and attaches a one-line snippet
@@ -584,10 +586,16 @@ class HubStore:
         where source is channel|inbox|broadcast|task and `where` is the channel
         name / agent id / "*" / task id. Empty query -> []. If `channels` is
         given, only those channels are searched (scopes inboxes/broadcast/tasks
-        out)."""
+        out). `author` (case-insensitive substring) restricts to a sender.
+
+        Visibility is implicit + safe (issue #115): it searches only
+        self.list_channels(), which merges THIS hub's own private root + the shared
+        public store — another user's private channels live in *their* root and are
+        never loaded here, so they can't appear in results."""
         terms = _search_terms(query)
         if not terms:
             return []
+        amatch = (author or "").strip().lower()
         hits: list[dict[str, Any]] = []
 
         def consider(m: dict, source: str, where: str) -> None:
@@ -595,6 +603,8 @@ class HubStore:
             low = text.lower()
             author = (m.get("author_name") or m.get("author") or "")
             alow = author.lower()
+            if amatch and amatch not in alow and amatch not in (m.get("author") or "").lower():
+                return                       # author filter (#115)
             score = 0
             for w in terms:
                 if w in low:
@@ -634,6 +644,18 @@ class HubStore:
                         "author_name": t.get("claimed_by") or t.get("created_by"),
                         "ts": t.get("updated_ts", 0),
                     }, "task", t.get("id"))
+
+        # Optionally also search pruned/archived history (#115). read_archive uses
+        # _channel_base, so this stays visibility-safe (own root + shared only).
+        if include_archive:
+            for name in names:
+                for m in self.read_archive(channel=name):
+                    if (m.get("ts", 0) or 0) >= since_ts:
+                        consider(m, "archive", name)
+            if not scoped:
+                for m in self.read_archive(broadcast=True):
+                    if (m.get("ts", 0) or 0) >= since_ts:
+                        consider(m, "archive", "*")
 
         hits.sort(key=lambda h: (h["score"], h["ts"]), reverse=True)
         return hits[:limit] if limit else hits

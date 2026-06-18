@@ -357,9 +357,17 @@ def cmd_search(args):
     store = _store(args)
     channels = ([c.strip() for c in args.channel.split(",") if c.strip()]
                 if args.channel else None)
+    since_ts = 0.0
+    if getattr(args, "since", None):
+        secs = _parse_duration(args.since)
+        if secs:
+            since_ts = time.time() - secs
     hits = store.search_messages(args.query, channels=channels,
+                                 since_ts=since_ts,
                                  limit=args.limit or 50,
-                                 include_tasks=not args.no_tasks)
+                                 include_tasks=not args.no_tasks,
+                                 author=getattr(args, "author", None),
+                                 include_archive=getattr(args, "include_archive", False))
     if args.json:
         print(json.dumps(hits, indent=2))
         return
@@ -1485,9 +1493,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("search", help="Full-text search the hub")
     sp.add_argument("query", help="Search terms")
     sp.add_argument("--channel", help="Restrict to channel(s), comma-separated")
+    sp.add_argument("--author", help="Restrict to a sender (case-insensitive substring)")
+    sp.add_argument("--since", help="Only matches newer than this, e.g. 24h, 7d, 30m")
     sp.add_argument("--limit", type=int, default=50)
     sp.add_argument("--no-tasks", dest="no_tasks", action="store_true",
                     help="Exclude task history from results")
+    sp.add_argument("--include-archive", dest="include_archive", action="store_true",
+                    help="Also search pruned/archived history (archive.jsonl)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_search)
 
