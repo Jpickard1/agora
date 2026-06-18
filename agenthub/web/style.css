@@ -96,6 +96,22 @@ html, body { height: 100%; overflow: hidden; }
 .msg .time { font-size: 11px; color: var(--muted); }
 .msg .host { font-size: 10px; color: var(--muted); background: var(--bg3); padding: 0 5px; border-radius: 4px; }
 .msg .text { white-space: pre-wrap; word-break: break-word; }
+/* markdown rendering inside chat messages */
+.msg .text a { color: #7aa2f7; text-decoration: underline; }
+.msg .text a:hover { color: #9ab8ff; }
+.msg .text code.inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em; background: var(--bg3); color: #c0caf5;
+  padding: 1px 5px; border-radius: 4px;
+}
+.msg .text pre.code-block {
+  background: var(--bg3); border-radius: 6px; padding: 8px 10px;
+  margin: 4px 0; overflow-x: auto; white-space: pre;
+}
+.msg .text pre.code-block code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em; color: #c0caf5; background: none; padding: 0;
+}
 .msg.directed { border-left: 3px solid var(--human); }
 
 .composer { display: flex; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--border); align-items: flex-end; }
