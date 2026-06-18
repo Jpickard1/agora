@@ -703,3 +703,78 @@ class HubStore:
             if owner and t["status"] not in TASK_TERMINAL and owner not in online:
                 stale.append(t)
         return stale
+
+
+    # -- usage / utilization (issue #6) -----------------------------------
+
+    def _host_metrics(self):
+        """Best-effort host CPU/mem (psutil if present, else stdlib fallback)."""
+        host = socket.gethostname().split(".")[0]
+        out = {"host": host}
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            out.update(cpu_percent=psutil.cpu_percent(interval=0.1),
+                       mem_percent=vm.percent,
+                       mem_used_gb=round(vm.used / 1e9, 1),
+                       mem_total_gb=round(vm.total / 1e9, 1))
+        except Exception:
+            pass
+        try:
+            out["load1"] = round(os.getloadavg()[0], 2)
+        except Exception:
+            pass
+        return out
+
+    def usage_stats(self, online_window: float = 30.0):
+        """Utilization snapshot for the efficiency panel (issue #6): per-agent
+        message + task counts, totals, and host metrics. Token usage needs an
+        agent-side reporting hook -- tracked as a follow-up."""
+        # messages per author (across channels)
+        msgs_by = {}
+        total_msgs = 0
+        for ch in self.list_channels():
+            for m in self.read_channel(ch["name"]):
+                who = m.get("author") or m.get("author_name") or "?"
+                msgs_by[who] = msgs_by.get(who, 0) + 1
+                total_msgs += 1
+        # tasks per owner
+        tasks = self.list_tasks()
+        tasks_by = {}
+        for t in tasks:
+            owner = t.get("claimed_by")
+            if not owner:
+                continue
+            d = tasks_by.setdefault(owner, {"total": 0, "done": 0, "running": 0})
+            d["total"] += 1
+            if t["status"] == "done":
+                d["done"] += 1
+            elif t["status"] == "running":
+                d["running"] += 1
+        agents = self.list_agents(online_window=online_window)
+        per_agent = []
+        for a in agents:
+            tc = tasks_by.get(a["id"], {})
+            per_agent.append({
+                "id": a["id"], "name": a["name"], "host": a.get("host"),
+                "online": a.get("online"), "status": a.get("status"),
+                "activity": a.get("activity"),
+                "messages": msgs_by.get(a["id"], 0),
+                "tasks_total": tc.get("total", 0),
+                "tasks_done": tc.get("done", 0),
+                "tasks_running": tc.get("running", 0),
+            })
+        done = sum(1 for t in tasks if t["status"] == "done")
+        return {
+            "totals": {
+                "agents": len(agents),
+                "online": sum(1 for a in agents if a.get("online")),
+                "messages": total_msgs,
+                "tasks": len(tasks),
+                "tasks_done": done,
+                "tasks_per_agent": round(len(tasks) / len(agents), 2) if agents else 0,
+            },
+            "agents": per_agent,
+            "host": self._host_metrics(),
+            "token_tracking": "follow-up: agents report usage via a bridge hook",
+        }
