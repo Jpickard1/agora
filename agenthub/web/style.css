@@ -359,3 +359,28 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .sr .time{color:var(--muted);margin-left:auto}
 .msg.flash{animation:flashmsg 1.6s ease-out}
 @keyframes flashmsg{0%{background:rgba(88,101,242,.35)}100%{background:transparent}}
+
+/* ---------- message reactions (issue #61) ---------- */
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.reaction-chip {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text);
+  font-size: 12px; line-height: 1; padding: 2px 7px; border-radius: 11px;
+}
+.reaction-chip:hover { border-color: var(--accent); }
+.reaction-chip.mine { background: rgba(88,101,242,.25); border-color: var(--accent); }
+.reaction-chip .rc-count { font-size: 11px; color: var(--muted); }
+.reaction-chip.mine .rc-count { color: var(--text); }
+/* the add-reaction affordance appears on message hover */
+.reaction-add { position: relative; display: inline-flex; }
+.reaction-addbtn { opacity: 0; border: 0; background: none; cursor: pointer; font-size: 13px; padding: 0 2px; transition: opacity .1s; }
+.msg:hover .reaction-addbtn, .reactions:hover .reaction-addbtn { opacity: .6; }
+.reaction-addbtn:hover { opacity: 1 !important; }
+.reaction-picker {
+  display: none; position: absolute; bottom: 100%; left: 0; z-index: 5;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 4px; gap: 2px; box-shadow: 0 6px 20px rgba(0,0,0,.4); white-space: nowrap;
+}
+.reaction-add:hover .reaction-picker { display: flex; }
+.rp-emoji { border: 0; background: none; cursor: pointer; font-size: 16px; padding: 2px 4px; border-radius: 6px; }
+.rp-emoji:hover { background: var(--bg3); }

@@ -146,6 +146,8 @@ function handleEvent(data) {
   } else if (data.type === "locks") {
     state.locks = data.locks;
     renderLocks();
+  } else if (data.type === "reaction") {
+    applyReactionEvent(data.msg_id, data.reactions);   // issue #61
   }
 }
 
@@ -928,11 +930,59 @@ function appendMessage(m, scroll = true) {
       </div>
       <div class="text">${renderMarkdown(m.text)}</div>
       ${img}
+      <div class="reactions"></div>
     </div>`;
   box.appendChild(el);
+  renderReactions(el, m.reactions || {});   // issue #61
   if (scroll) scrollDown();
   // a live alert pins itself to the top of the pane so it can't be missed
   if (isAlert && scroll && !state.dismissed.has(m.id)) showAlertBanner(m);
+}
+
+/* ---------------- reactions (issue #61) ---------------- */
+const REACTION_CHOICES = ["👍", "✅", "🎉", "❤️", "😄", "🚀", "👀", "🙏"];
+
+function renderReactions(msgEl, reactions) {
+  const box = msgEl.querySelector(".reactions");
+  if (!box) return;
+  const msgId = msgEl.dataset.msgId;
+  box.innerHTML = "";
+  Object.entries(reactions || {}).forEach(([emoji, info]) => {
+    const chip = document.createElement("button");
+    const mine = (info.authors || []).includes(state.name);
+    chip.className = "reaction-chip" + (mine ? " mine" : "");
+    chip.title = (info.authors || []).join(", ");
+    chip.innerHTML = `${emoji} <span class="rc-count">${info.count}</span>`;
+    chip.onclick = () => reactToMessage(msgId, emoji);
+    box.appendChild(chip);
+  });
+  // hover "add reaction" picker
+  const add = document.createElement("span");
+  add.className = "reaction-add";
+  add.innerHTML = `<button class="reaction-addbtn" title="Add reaction">🙂﹢</button>
+    <span class="reaction-picker">${REACTION_CHOICES.map(
+      (e) => `<button class="rp-emoji" data-emoji="${e}">${e}</button>`).join("")}</span>`;
+  add.querySelectorAll(".rp-emoji").forEach((b) => {
+    b.onclick = () => reactToMessage(msgId, b.dataset.emoji);
+  });
+  box.appendChild(add);
+}
+
+async function reactToMessage(msgId, emoji) {
+  if (!msgId) return;
+  try {
+    await api(`/api/messages/${encodeURIComponent(msgId)}/reactions`, {
+      method: "POST",
+      body: JSON.stringify({ emoji, author: state.name, author_name: state.name, op: "toggle" }),
+    });
+    // The SSE 'reaction' event will re-render chips for everyone (incl. us).
+  } catch (_) { /* ignore */ }
+}
+
+// Update a single message's chips from a live reaction event.
+function applyReactionEvent(msgId, reactions) {
+  const el = document.querySelector(`[data-msg-id="${msgId}"]`);
+  if (el) renderReactions(el, reactions || {});
 }
 
 function scrollDown() {
