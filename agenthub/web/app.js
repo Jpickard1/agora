@@ -880,12 +880,14 @@ function renderTaskBoard() {
   const extra = other.length
     ? `<div class="tb-col"><div class="tb-col-head">Other <span class="tb-count">${other.length}</span></div>${other.map(taskCard).join("")}</div>`
     : "";
-  // preserve horizontal scroll across re-renders so the view doesn't snap back
+  // preserve horizontal scroll across re-renders so the view doesn't snap back;
+  // defer via rAF so the browser has finished layout before we restore scrollLeft
+  // (setting it synchronously after innerHTML assignment is a no-op — scrollWidth is 0)
   const prev = box.querySelector(".taskboard");
   const sx = prev ? prev.scrollLeft : 0;
   box.innerHTML = `<div class="taskboard">${colHtml}${extra}</div>`;
   const now = box.querySelector(".taskboard");
-  if (now) now.scrollLeft = sx;
+  if (now && sx) requestAnimationFrame(() => { now.scrollLeft = sx; });
 }
 
 // Parse a task ref like "owner/repo#123" into its GitHub issue URL, else "".
