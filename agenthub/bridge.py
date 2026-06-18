@@ -220,6 +220,17 @@ def resolve_channels(store, all_channels: bool, channels_spec: str | None,
     return [default_channel]
 
 
+def wants_all_channels(all_flag: bool, channel: str | None,
+                       channels: str | None, single: bool) -> bool:
+    """#75: a bridge follows ALL channels by default. Explicit --all-channels
+    always wins; --single (or a --channel/--channels subset) opts out."""
+    if all_flag:
+        return True
+    if single:
+        return False
+    return channel is None and channels is None
+
+
 def channels_activity(names: list[str]) -> str:
     """Roster 'activity' string describing the set of followed channels."""
     if not names:
@@ -260,12 +271,17 @@ def inject(pane: str, text: str) -> None:
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="hub-bridge")
     ap.add_argument("--name", required=True, help="This agent's name (also its hub id)")
-    ap.add_argument("--channel", default="general",
-                    help="Channel to listen to (single-channel default)")
+    # Channel selection (issue #75): follow ALL channels by DEFAULT (incl. ones
+    # created later) so agents never miss a topical channel. Opt out with
+    # --channel X / --channels a,b (a subset) or --single (just #general).
+    ap.add_argument("--channel", default=None,
+                    help="Follow only this single channel (opts out of the all-channels default)")
     ap.add_argument("--channels", default=None,
-                    help="Comma-separated channels to follow, e.g. general,dev,alerts")
+                    help="Comma-separated subset to follow, e.g. general,dev,alerts (opts out of all-channels)")
     ap.add_argument("--all-channels", dest="all_channels", action="store_true",
-                    help="Follow EVERY channel, including ones created later")
+                    help="Follow EVERY channel (this is the default; flag kept for explicitness/back-compat)")
+    ap.add_argument("--single", "--no-all-channels", dest="single", action="store_true",
+                    help="Follow only #general (or --channel) instead of the all-channels default")
     ap.add_argument("--root", default=None, help="Hub root (else env/pointer)")
     ap.add_argument("--pane", default=None, help="tmux pane id (else auto-detect)")
     ap.add_argument("--interval", type=float, default=2.0)
@@ -293,6 +309,12 @@ def main(argv=None):
     ap.add_argument("--inbox-file", default=None,
                     help="Path for the 'file' transport (default <root>/inbox-<name>.txt)")
     args = ap.parse_args(argv)
+
+    # #75: default to following ALL channels unless the user asked for a specific
+    # subset (--channel/--channels) or explicitly opted into single (--single).
+    args.all_channels = wants_all_channels(args.all_channels, args.channel,
+                                           args.channels, args.single)
+    single_channel = args.channel or "general"
 
     store = HubStore(resolve_root(args.root))
     store.init()
@@ -325,7 +347,7 @@ def main(argv=None):
                          capabilities=["claude-code"],
                          extra={"tmux_session": session, "transport": transport.kind})
     channels = resolve_channels(store, args.all_channels, args.channels,
-                                args.channel)
+                                single_channel)
     store.heartbeat(aid, status="listening", activity=channels_activity(channels))
     # Idle-wait (settle detection) is a tmux-only concept; file/stdout deliver now.
     idle_mode = transport.kind == "tmux" and not args.no_idle_wait
@@ -400,7 +422,7 @@ def main(argv=None):
             # channels created after we started are followed automatically.
             if args.all_channels:
                 added = False
-                for c in resolve_channels(store, True, None, args.channel):
+                for c in resolve_channels(store, True, None, single_channel):
                     if c not in chan_cursors:
                         chan_cursors[c] = start if args.history else time.time()
                         print(f"[bridge] now following new channel #{c}", flush=True)

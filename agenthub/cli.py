@@ -995,11 +995,17 @@ def cmd_install_service(args):
 
 def cmd_listen(args):
     from .bridge import main as bridge_main
-    argv = ["--name", args.name, "--channel", args.channel]
+    argv = ["--name", args.name]
+    # Only forward channel-selection flags the user actually set, so the bridge's
+    # all-channels default (#75) isn't overridden by a phantom --channel general.
+    if getattr(args, "channel", None):
+        argv += ["--channel", args.channel]
     if getattr(args, "channels", None):
         argv += ["--channels", args.channels]
     if getattr(args, "all_channels", False):
         argv.append("--all-channels")
+    if getattr(args, "single", False):
+        argv.append("--single")
     if args.root:
         argv += ["--root", args.root]
     if args.pane:
@@ -1491,10 +1497,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
-    sp.add_argument("--channel", default="general", help="Single channel to follow (default)")
-    sp.add_argument("--channels", help="Comma-separated channels to follow, e.g. general,dev,alerts")
+    sp.add_argument("--channel", default=None, help="Follow only this single channel (opts out of the all-channels default)")
+    sp.add_argument("--channels", help="Comma-separated subset to follow, e.g. general,dev,alerts")
     sp.add_argument("--all-channels", dest="all_channels", action="store_true",
-                    help="Follow EVERY channel, including ones created later")
+                    help="Follow EVERY channel (this is the default; kept for explicitness)")
+    sp.add_argument("--single", "--no-all-channels", dest="single", action="store_true",
+                    help="Follow only #general (or --channel) instead of the all-channels default")
     sp.add_argument("--pane", help="tmux pane id to inject into (else auto-detect this pane)")
     sp.add_argument("--root", help="Hub root (else env/pointer)")
     sp.add_argument("--history", action="store_true", help="Deliver pre-existing messages too")
