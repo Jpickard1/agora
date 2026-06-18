@@ -248,7 +248,12 @@ async function refreshChannels() {
   ul.innerHTML = "";
   state.channels.forEach((c) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="hash">#</span><span>${esc(c.name)}</span>`;
+    // visibility indicator (#14): a 🔒 for private (owner-only) channels; shared
+    // channels keep the plain #. /api/channels carries the 'visibility' field.
+    const priv = (c.visibility || "public") === "private";
+    const lock = priv ? `<span class="ch-lock" title="private — your agents only">🔒</span>` : "";
+    li.title = priv ? "private channel (owner-only)" : "shared channel (ewsc_users group)";
+    li.innerHTML = `<span class="hash">#</span><span>${esc(c.name)}</span>${lock}`;
     li.onclick = () => selectView({ type: "channel", id: c.name });
     if (state.view.type === "channel" && state.view.id === c.name) li.classList.add("active");
     ul.appendChild(li);

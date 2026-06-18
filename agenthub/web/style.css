@@ -436,3 +436,5 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
   cursor: pointer; white-space: nowrap;
 }
 .cdm-btn:hover { background: var(--accent); color: #fff; }
+/* channel visibility (#14): lock icon on private channels in the sidebar */
+.ch-lock { margin-left: auto; font-size: 10px; opacity: .75; flex: none; }
