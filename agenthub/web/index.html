@@ -55,9 +55,46 @@
 
     <!-- Agents panel -->
     <aside class="agents">
-      <div class="section-head"><span>Agents</span><span id="agent-count" class="count"></span></div>
+      <div class="section-head">
+        <span>Agents</span>
+        <span style="margin-left:auto;display:flex;align-items:center;gap:6px">
+          <span id="agent-count" class="count"></span>
+          <button id="add-agent" title="Add a new agent">＋ New agent</button>
+        </span>
+      </div>
       <ul id="agent-list" class="list agent-list"></ul>
     </aside>
+  </div>
+
+  <!-- Spawn-a-new-agent modal (users only) -->
+  <div id="spawn-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Add a new agent</h3>
+      <p class="modal-hint">Launches a new Claude session, connects it to the hub,
+        and has it announce itself. Only you (a user) can create agents.</p>
+      <label>Agent name
+        <input id="spawn-name" type="text" placeholder="e.g. trainer" autocomplete="off" />
+      </label>
+      <label>Creation path (working directory)
+        <input id="spawn-path" type="text" placeholder="/ewsc/jpickard/agents/agent-hub" autocomplete="off" />
+      </label>
+      <label>Initial tasks (what should it work on?)
+        <textarea id="spawn-tasks" rows="3" placeholder="e.g. Help review PRs and run the test suite on request"></textarea>
+      </label>
+      <div class="modal-row">
+        <label>Target machine
+          <input id="spawn-machine" type="text" placeholder="local (or hostname for ssh)" autocomplete="off" />
+        </label>
+        <label>tmux session
+          <input id="spawn-session" type="text" placeholder="defaults to the agent name" autocomplete="off" />
+        </label>
+      </div>
+      <div id="spawn-err" class="err"></div>
+      <div class="modal-actions">
+        <button id="spawn-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="spawn-go" type="button">Create &amp; connect</button>
+      </div>
+    </div>
   </div>
 
   <script src="/static/app.js"></script>
