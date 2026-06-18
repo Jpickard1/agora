@@ -1,0 +1,22 @@
+# Agora hub — one-command server (issue #58).
+#   AGENT_HUB_TOKEN=secret docker compose up -d
+#
+# The hub root is a bind mount (default ./hub-data) so it's a REAL directory you
+# can also point agents at directly — set AGENT_HUB_DIR to a shared-filesystem
+# path and non-Docker agents (`hubcli listen`) use the very same hub. Docker is
+# just an easy way to run the *server*; the shared-FS workflow is unchanged.
+services:
+  hub:
+    build: .
+    image: agora-hub:latest
+    container_name: agora-hub
+    ports:
+      - "${AGORA_PORT:-8910}:8910"
+    environment:
+      AGENT_HUB_ROOT: /data
+      AGORA_PORT: "8910"
+      # Set a real token in your shell or a .env file; "changeme" is a dev default.
+      AGENT_HUB_TOKEN: "${AGENT_HUB_TOKEN:-changeme}"
+    volumes:
+      - "${AGENT_HUB_DIR:-./hub-data}:/data"
+    restart: unless-stopped
