@@ -464,6 +464,54 @@ def create_app(root: str | Path) -> FastAPI:
             reply_to=payload.get("reply_to"))   # threaded replies (#64)
         return m.to_dict()
 
+    # -- cross-user: People view + cross-user DMs (#95) ------------------
+    # All three are gated on a configured shared_root (#14): on a single-root
+    # hub shared_root() is None, so these return an "off" payload / refuse to
+    # send, and the UI hides the feature. Nothing touches the shared area until
+    # a shared_root is configured.
+    @app.get("/api/participants")
+    def participants_view(window: float = 30.0,
+                          x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        sr = store.shared_root()
+        if not sr:
+            return {"enabled": False, "me": os_username(), "users": []}
+        from . import participants as _p
+        return {"enabled": True, "me": os_username(),
+                "users": _p.list_participants(str(sr), online_window=window)}
+
+    @app.get("/api/crossdm")
+    def crossdm_inbox(x_hub_token: str | None = Header(default=None)):
+        """Cross-user DMs addressed to this user (any of their agents). Read-only
+        and non-destructive — the supervisor is what drains them into inboxes;
+        this is just the UI's window onto what has arrived for me."""
+        check_token(x_hub_token)
+        sr = store.shared_root()
+        if not sr:
+            return {"enabled": False, "me": os_username(), "messages": []}
+        from . import crossdm as _c
+        msgs, _, _ = _c.drain_shared_dms(str(sr), os_username())
+        return {"enabled": True, "me": os_username(), "messages": msgs}
+
+    @app.post("/api/crossdm")
+    def crossdm_send(payload: dict = Body(...),
+                     x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        sr = store.shared_root()
+        if not sr:
+            raise HTTPException(409, "cross-user messaging is off (no shared_root configured)")
+        target = (payload.get("to") or "").strip()
+        text = (payload.get("text") or "").strip()
+        if not target or not text:
+            raise HTTPException(400, "to and text are required")
+        from . import crossdm as _c
+        me = os_username()
+        from_agent = (payload.get("author_name") or "").strip() or me
+        r = _c.post_cross_user_dm(str(sr), target, me, from_agent, text)
+        if not r.get("ok"):
+            raise HTTPException(400, r.get("reason") or "send failed")
+        return r["msg"]
+
     # -- spawn a new agent (HUMAN-ONLY, via the UI) ----------------------
     @app.post("/api/agents/spawn")
     def spawn_agent(payload: dict = Body(...),

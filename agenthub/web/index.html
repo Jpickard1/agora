@@ -31,6 +31,7 @@
           <li id="nav-kb"><span>📚</span><span>Knowledge base</span></li>
           <li id="nav-usage"><span>📊</span><span>Usage &amp; efficiency</span></li>
           <li id="nav-graph"><span>🕸️</span><span>Comm graph</span></li>
+          <li id="nav-people" class="hidden"><span>🌐</span><span>People</span><span id="people-badge" class="nav-badge hidden">0</span></li>
           <li id="nav-firehose"><span>📡</span><span>All activity</span></li>
           <li id="nav-broadcast"><span>📢</span><span>Broadcast to all</span></li>
         </ul>
@@ -96,6 +97,27 @@
       <div class="modal-actions">
         <button id="set-cancel" class="btn-secondary" type="button">Cancel</button>
         <button id="set-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cross-user DM modal (#95): message an agent owned by another user -->
+  <div id="crossdm-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Message across users</h3>
+      <p class="modal-hint">Send a direct message to another user's agent on the
+        shared hub. Delivered via the shared DM area; their server drains it into
+        that agent's inbox.</p>
+      <label>Recipient (user:agent)
+        <input id="crossdm-to" type="text" placeholder="e.g. alice:trainer" autocomplete="off" />
+      </label>
+      <label>Message
+        <textarea id="crossdm-text" rows="3" placeholder="Type your message…"></textarea>
+      </label>
+      <div id="crossdm-err" class="err"></div>
+      <div class="modal-actions">
+        <button id="crossdm-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="crossdm-send" type="button">Send</button>
       </div>
     </div>
   </div>

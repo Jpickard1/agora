@@ -24,6 +24,10 @@ const state = {
   locks: [],        // advisory locks (live via SSE)
   usage: null,      // utilization snapshot for the usage panel
   messages: [],     // currently displayed
+  people: { enabled: false, users: [] },  // shared-hub roster (#95)
+  crossdms: [],     // incoming cross-user DMs (#95)
+  peopleEnabled: false,
+  seenCrossdm: new Set(),  // cross-user DM ids already shown (badge clearing)
   seenIds: new Set(),
   dismissed: new Set(),  // alert message ids the user dismissed
   es: null,
@@ -91,6 +95,7 @@ async function start() {
   await refreshAgents();
   await refreshMentions(false);
   await refreshLocks();
+  await refreshPeople();   // sets nav-people visibility (#95)
   await selectView({ type: "channel", id: "general" });
   openStream();
 }
@@ -347,6 +352,126 @@ function renderDmList() {
   });
 }
 
+/* ---------------- cross-user: People + cross-user DMs (#95) ----------------
+ * Gated on a configured shared_root: the API returns {enabled:false} on a
+ * single-root hub, so the nav item stays hidden and the feature is dormant. */
+async function refreshPeople() {
+  let p, dm;
+  try {
+    [p, dm] = await Promise.all([api("/api/participants"), api("/api/crossdm")]);
+  } catch (_) { return; }
+  state.people = p || { enabled: false, users: [] };
+  state.crossdms = (dm && dm.messages) || [];
+  state.peopleEnabled = !!(p && p.enabled);
+  // Show the nav entry only when cross-user messaging is actually on.
+  const nav = $("#nav-people");
+  if (nav) nav.classList.toggle("hidden", !state.peopleEnabled);
+  // Unread-ish badge: count of incoming cross-user DMs the user hasn't opened.
+  const badge = $("#people-badge");
+  if (badge) {
+    const unseen = state.crossdms.filter((m) => !state.seenCrossdm.has(m.id)).length;
+    badge.textContent = String(unseen);
+    badge.classList.toggle("hidden", unseen === 0);
+  }
+  if (state.view.type === "people") renderPeople();
+}
+
+function renderPeople() {
+  const box = $("#messages");
+  if (!state.peopleEnabled) {
+    box.innerHTML = `<div class="empty">Cross-user messaging is off — no shared
+      hub is configured. An admin can enable it by pointing the hub at a shared
+      root; until then there are no other users to message here.</div>`;
+    return;
+  }
+  const me = (state.people && state.people.me) || "";
+  const users = (state.people && state.people.users) || [];
+  const dms = state.crossdms || [];
+  // mark everything currently shown as seen (clears the badge)
+  dms.forEach((m) => state.seenCrossdm.add(m.id));
+  const badge = $("#people-badge");
+  if (badge) badge.classList.add("hidden");
+
+  const inbox = dms.length
+    ? dms.slice().reverse().map((m) => `
+        <div class="msg">
+          <div class="msg-head"><span class="author">${esc(m.from_user || "?")}:${esc(m.author_name || m.author || "?")}</span>
+            <span class="time">${m.ts ? fmtTime(m.ts) : ""}</span></div>
+          <div class="text">${renderMarkdown(m.text || "")}</div>
+        </div>`).join("")
+    : `<div class="empty" style="margin:4px 2px">no cross-user DMs yet</div>`;
+
+  const roster = users.length
+    ? users.map((u) => {
+        const isMe = u.user === me;
+        const agents = (u.agents || []).map((a) => `
+          <li class="agent">
+            <div class="row1">
+              <span class="pdot ${a.online ? "online" : ""}"></span>
+              <span class="aname">${esc(a.name)}</span>
+              <button class="cdm-btn" data-to="${esc(u.user)}:${esc(a.name)}" title="Message ${esc(u.user)}:${esc(a.name)}">✉ Message</button>
+            </div>
+            <div class="ameta">${a.online ? "online" : "seen " + rel(a.age || 0)}${a.host ? " · 🖥 " + esc(a.host) : ""}</div>
+          </li>`).join("");
+        return `<div class="people-user">
+          <div class="section-head"><span>🧑 ${esc(u.user)}${isMe ? " (you)" : ""}</span>
+            <span class="count" style="margin-left:auto">${u.online_agents || 0}/${(u.agents || []).length} online</span></div>
+          <ul class="list agent-list">${agents || '<li class="empty">no agents</li>'}</ul>
+        </div>`;
+      }).join("")
+    : `<div class="empty">no participants registered on the shared hub yet</div>`;
+
+  box.innerHTML = `
+    <div class="people-pane">
+      <div class="section-head"><span>📥 Incoming cross-user DMs</span>
+        <button id="people-new" class="cdm-btn" style="margin-left:auto">✉ New message</button></div>
+      <div class="people-inbox">${inbox}</div>
+      <div class="section-head" style="margin-top:14px"><span>🌐 People on the shared hub</span></div>
+      ${roster}
+    </div>`;
+  box.querySelectorAll(".cdm-btn[data-to]").forEach((b) => {
+    b.onclick = () => openCrossdm(b.dataset.to);
+  });
+  const nb = $("#people-new");
+  if (nb) nb.onclick = () => openCrossdm("");
+}
+
+/* cross-user DM modal */
+function openCrossdm(prefillTo) {
+  $("#crossdm-err").textContent = "";
+  $("#crossdm-to").value = prefillTo || "";
+  $("#crossdm-text").value = "";
+  $("#crossdm-modal").classList.remove("hidden");
+  ($(prefillTo ? "#crossdm-text" : "#crossdm-to")).focus();
+}
+function closeCrossdm() { $("#crossdm-modal").classList.add("hidden"); }
+
+async function sendCrossdm() {
+  const to = $("#crossdm-to").value.trim();
+  const text = $("#crossdm-text").value.trim();
+  const err = $("#crossdm-err");
+  err.textContent = "";
+  if (!to || !text) { err.textContent = "Recipient and message are required."; return; }
+  const btn = $("#crossdm-send");
+  btn.disabled = true;
+  try {
+    await api("/api/crossdm", { method: "POST",
+      body: JSON.stringify({ to, text, author_name: state.name }) });
+    closeCrossdm();
+    refreshPeople();
+  } catch (e) {
+    err.textContent = "Could not send: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+if ($("#crossdm-cancel")) $("#crossdm-cancel").onclick = closeCrossdm;
+if ($("#crossdm-send")) $("#crossdm-send").onclick = sendCrossdm;
+if ($("#crossdm-modal")) $("#crossdm-modal").addEventListener("click", (e) => {
+  if (e.target === $("#crossdm-modal")) closeCrossdm();
+});
+
 /* ---------------- views ---------------- */
 async function selectView(view) {
   state.view = view;
@@ -407,6 +532,12 @@ async function selectView(view) {
     $("#view-sub").textContent = "who direct-messages whom — directed, weighted by message count";
     composer.style.display = "none";
     await refreshGraph();
+  } else if (view.type === "people") {
+    $("#view-title").textContent = "🌐 People";
+    $("#view-sub").textContent = "users + agents on the shared hub — message across users";
+    composer.style.display = "none";
+    await refreshPeople();
+    renderPeople();
   } else if (view.type === "mentions") {
     $("#view-title").textContent = "🔔 Mentions";
     $("#view-sub").textContent = `messages that mention @${state.name} or @all`;
@@ -1182,6 +1313,7 @@ $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-kb").onclick = () => selectView({ type: "kb" });
 $("#nav-usage").onclick = () => selectView({ type: "usage" });
 $("#nav-graph").onclick = () => selectView({ type: "graph" });
+$("#nav-people").onclick = () => selectView({ type: "people" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 
@@ -1252,6 +1384,8 @@ $("#spawn-go").onclick = async () => {
 
 /* periodic agent refresh as a backstop to the SSE presence push */
 setInterval(refreshAgents, 8000);
+/* periodic cross-user roster + incoming-DM refresh (#95); cheap no-op when off */
+setInterval(refreshPeople, 8000);
 
 /* ---------------- utils ---------------- */
 function esc(s) {
