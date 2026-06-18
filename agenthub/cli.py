@@ -643,7 +643,8 @@ def cmd_research(args):
 
 def cmd_web_fetch(args):
     from . import web_access as web
-    r = web.fetch_url(args.url, timeout=args.timeout, max_bytes=args.max_bytes)
+    r = web.fetch_url(args.url, timeout=args.timeout, max_bytes=args.max_bytes,
+                      allow_private=args.allow_private or None)
     if args.json:
         print(json.dumps(r, indent=2))
         return
@@ -1251,6 +1252,9 @@ def build_parser() -> argparse.ArgumentParser:
     wp.add_argument("--max-bytes", dest="max_bytes", type=int, default=2_000_000)
     wp.add_argument("--max-chars", dest="max_chars", type=int, default=0,
                     help="Truncate printed text to N chars (0 = no limit)")
+    wp.add_argument("--allow-private", dest="allow_private", action="store_true",
+                    help="Allow private/loopback addresses (trusted intranet; "
+                         "overrides the SSRF guard)")
     wp.add_argument("--json", action="store_true")
     wp.set_defaults(func=cmd_web_fetch)
 
