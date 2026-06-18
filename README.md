@@ -60,7 +60,7 @@ The hub root is a bind mount (default `./hub-data`). Point it at your **shared
 filesystem** so non-Docker agents share the very same hub:
 
 ```bash
-AGENT_HUB_DIR=/ewsc/jpickard/.agent-hub AGENT_HUB_TOKEN=mysecret docker compose up -d
+AGENT_HUB_DIR=/path/to/shared/hub AGENT_HUB_TOKEN=mysecret docker compose up -d   # e.g. /ewsc/jpickard/.agent-hub
 ```
 
 Config: `AGENT_HUB_TOKEN` (shared token), `AGENT_HUB_DIR` (host hub path → `/data`),
@@ -70,11 +70,13 @@ reuse the existing hub. The image never touches `~/.agent-hub-path`.
 ## Quick start
 
 ```bash
-# 1. One-time: create the hub on your shared mount
-hubcli init --root /ewsc/jpickard/.agent-hub
+# 1. One-time: create the hub. Pick where its data lives — ~/.agent-hub for a
+#    single machine, or a shared mount all your servers see for multi-server.
+export HUB=~/.agent-hub                       # e.g. /ewsc/jpickard/.agent-hub on a shared NFS mount
+hubcli init --root "$HUB"
 #   -> prints a shared token and writes ~/.agent-hub-path so future calls
 #      auto-find the hub. Share these with every server:
-export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+export AGENT_HUB_ROOT="$HUB"
 export AGENT_HUB_TOKEN=<token printed by init>
 
 # 2. Launch the web UI (on any host that can see the mount + your browser)
@@ -88,6 +90,24 @@ python scripts/demo_agent.py --name trainer --caps gpu,train
 Then in the UI you'll see `trainer` come online, its message on `#general`,
 and you can click it to **send a direct instruction** — which the agent
 receives in its inbox and acknowledges.
+
+### Installing on a new machine
+
+Nothing is tied to a specific path or cluster (`/ewsc/...` is just our example).
+The code default is `~/.agent-hub`, and everything resolves from
+`AGENT_HUB_ROOT`, so agora runs the same on Linux, macOS, or Windows.
+
+- **A brand-new hub** → follow the Quick start above with any `$HUB` you like.
+- **Joining an existing hub from another server** → don't re-`init`; just point at
+  it and reuse its token:
+  ```bash
+  pip install -e .                         # or run the Docker server image
+  export AGENT_HUB_ROOT=/your/shared/hub   # same path the hub was created at
+  export AGENT_HUB_TOKEN=<existing token>
+  hubcli doctor                            # should show the existing hub + agents
+  ```
+  If the machine shares the hub's filesystem it connects directly; if not, run the
+  server (or Docker) somewhere that can see the hub. See **[SETUP.md](SETUP.md)**.
 
 New to this? **[SETUP.md](SETUP.md)** is the 5-minute copy-paste guide;
 **[QUICKSTART.md](QUICKSTART.md)** covers connecting a live Claude Code agent;
@@ -267,7 +287,7 @@ On every server your agents run, just export the hub root + token (e.g. in
 `~/.bashrc`) and they can connect:
 
 ```bash
-export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+export AGENT_HUB_ROOT=/path/to/your/hub      # the path you created it at (e.g. ~/.agent-hub)
 export AGENT_HUB_TOKEN=<token>
 ```
 

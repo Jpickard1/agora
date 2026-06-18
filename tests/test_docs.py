@@ -72,6 +72,27 @@ def test_docker_is_first_class_install():
     assert "Option B" in readme            # presented as a co-equal install path
 
 
+def test_no_hardcoded_ewsc_commands():
+    """Portability (issue #68): docs must not tell users to run commands against a
+    literal /ewsc path — those values are examples only, real commands use a
+    placeholder / $HUB / AGENT_HUB_ROOT."""
+    for rel in ("README.md", "SETUP.md", "QUICKSTART.md"):
+        txt = _read(rel)
+        assert "init --root /ewsc" not in txt, f"{rel}: hardcoded /ewsc in an init command"
+        assert "AGENT_HUB_ROOT=/ewsc" not in txt, f"{rel}: hardcoded /ewsc export"
+
+
+def test_portable_default_documented():
+    rd, su = _read("README.md"), _read("SETUP.md")
+    assert "~/.agent-hub" in rd and "~/.agent-hub" in su   # cross-platform default
+    assert "AGENT_HUB_ROOT" in rd
+
+
+def test_new_machine_section_present():
+    assert "Installing on a new machine" in _read("README.md")
+    assert "Installing on a new machine" in _read("SETUP.md")
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

@@ -8,7 +8,9 @@ working hub with live agents without guessing. Each step has a **verify** line.
 ## 0. Requirements
 
 - Python ≥ 3.9, `git`, and (for live agents) `tmux`.
-- A directory on a filesystem that all your servers share (e.g. `/ewsc/jpickard`).
+- A directory for the hub's data. For **multiple servers**, use a path they all
+  share (any NFS/shared mount — `/ewsc/jpickard` is just our example). For a
+  **single machine**, the default `~/.agent-hub` is fine.
 
 ```bash
 python3 --version && git --version && tmux -V
@@ -29,19 +31,25 @@ pip install -e .            # installs the `hubcli` command + deps (FastAPI, uvi
 
 ## 2. Create the hub (once)
 
-Pick a path on your shared filesystem for the hub's data:
+Choose where the hub's data lives, then create it. Use a shared path for a
+multi-server setup, or `~/.agent-hub` for a single machine:
 
 ```bash
-hubcli init --root /ewsc/jpickard/.agent-hub
+# Set HUB to your chosen path. Examples:
+#   export HUB=~/.agent-hub                    # single machine (cross-platform default)
+#   export HUB=/ewsc/jpickard/.agent-hub       # a shared NFS mount (our EWSC example)
+#   export HUB=/mnt/shared/agent-hub           # any other shared mount
+export HUB=~/.agent-hub
+hubcli init --root "$HUB"
 ```
-This prints a **shared token** and remembers the path. Export both (add to `~/.bashrc`
-so every shell/agent finds the hub automatically):
+This prints a **shared token** and remembers the path. Export both (add to your
+shell profile, e.g. `~/.bashrc`, so every shell/agent finds the hub automatically):
 
 ```bash
-export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+export AGENT_HUB_ROOT="$HUB"
 export AGENT_HUB_TOKEN=<the token it printed>
 ```
-**Verify:** `hubcli doctor` shows `✓ Hub at /ewsc/jpickard/.agent-hub`.
+**Verify:** `hubcli doctor` shows `✓ Hub at <your $HUB>`.
 
 ---
 
@@ -120,6 +128,36 @@ hubcli export --since 7d            # md/json/html activity report + standup
 
 ---
 
+## Installing on a new machine
+
+agora isn't tied to any specific path or cluster — `/ewsc/...` is only our
+example. To bring up agora somewhere new:
+
+**A new, independent hub** → just follow steps 1–3 above, picking a `$HUB` that
+makes sense for that box (`~/.agent-hub` for a single machine).
+
+**Join an existing hub from another server** (the common multi-server case) →
+**don't** run `hubcli init` again. Point the new machine at the hub that already
+exists and reuse its token:
+
+```bash
+pip install -e .                          # (or use the Docker server image)
+export AGENT_HUB_ROOT=/your/shared/hub    # the SAME path the hub was created at
+export AGENT_HUB_TOKEN=<the existing token>
+hubcli doctor                             # verify: should show the existing hub + agents
+```
+
+- If the machine **shares the filesystem** with the hub (NFS, etc.), that's all
+  it needs — agents connect directly.
+- If it **can't see** the hub's filesystem, run the **server** somewhere that can
+  (or via Docker) and have remote agents talk to it over the network. The hub
+  root itself always lives on a path the server can reach.
+
+The code default is `~/.agent-hub` and everything resolves from `AGENT_HUB_ROOT`,
+so no path is hardcoded — agora runs the same on Linux, macOS, or Windows.
+
+---
+
 ## Notes & gotchas
 
 - **Unique agent names.** The name is the agent's id and is used to filter its own
@@ -129,6 +167,7 @@ hubcli export --since 7d            # md/json/html activity report + standup
 - **No API keys.** Agents are normal `claude` CLI sessions; they talk to the hub
   with plain `hubcli` shell commands.
 - **Your data never enters git.** All messages/agents live under `AGENT_HUB_ROOT`
-  (e.g. `/ewsc/jpickard/.agent-hub`), which is **outside this repo** and also
+  (your `$AGENT_HUB_ROOT` — e.g. `~/.agent-hub` or `/ewsc/jpickard/.agent-hub`),
+  which is **outside this repo** and also
   `.gitignore`d. The token lives there too — it is never committed. The git repo
   contains only source code and docs.

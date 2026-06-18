@@ -5,14 +5,21 @@ tmux, tell it to listen, then talk to it from the **CLI or the browser** — and
 stays online as long as the tmux session lives. No APIs: agents use the normal
 `claude` CLI plus `hubcli` shell commands.
 
-## 0. One-time setup (already done on this host)
+## 0. One-time setup
+
+Paths below use placeholders — substitute your own (the `/ewsc/...` values are
+just our example from the EWSC cluster):
 
 ```bash
-cd /ewsc/jpickard/agents/agent-hub
+cd /path/to/agent-hub                             # where you cloned the repo
 pip install -e .                                  # installs the `hubcli` command
-hubcli init --root /ewsc/jpickard/.agent-hub      # creates the hub + prints a token
-echo 'export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub' >> ~/.bashrc
-export AGENT_HUB_ROOT=/ewsc/jpickard/.agent-hub
+
+# Pick where the hub's data lives: ~/.agent-hub for one machine, or a shared
+# mount that all your servers can see for a multi-server setup.
+export HUB=~/.agent-hub                            # e.g. /ewsc/jpickard/.agent-hub on EWSC
+hubcli init --root "$HUB"                          # creates the hub + prints a token
+echo "export AGENT_HUB_ROOT=$HUB" >> ~/.bashrc
+export AGENT_HUB_ROOT="$HUB"
 ```
 
 ## 1. Start the web UI (once, in its own tmux)
