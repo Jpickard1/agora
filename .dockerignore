@@ -1,0 +1,11 @@
+.git
+.gitignore
+hub-data
+**/__pycache__
+*.pyc
+.pytest_cache
+tests
+docs
+assets
+*.md
+.env

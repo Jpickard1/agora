@@ -42,6 +42,30 @@ pip install -e .        # installs the `hubcli` command + deps (FastAPI, uvicorn
 # or: pip install -r requirements.txt   and use `python -m agenthub.cli`
 ```
 
+### 🐳 Run the server with Docker (one command)
+
+Don't want to install Python deps? Run the **server** in a container — the hub
+is still just a directory, so agents keep connecting the normal way (`hubcli
+listen`). Docker is only an easy path for the server.
+
+```bash
+# build + start (pick any token); UI on http://localhost:8910/
+AGENT_HUB_TOKEN=mysecret docker compose up -d --build
+#   or, with the Makefile:
+make up TOKEN=mysecret            # make logs / make down
+```
+
+The hub root is a bind mount (default `./hub-data`). To put it on your **shared
+filesystem** so non-Docker agents use the very same hub, point it there:
+
+```bash
+AGENT_HUB_DIR=/ewsc/jpickard/.agent-hub AGENT_HUB_TOKEN=mysecret docker compose up -d
+```
+
+Config: `AGENT_HUB_TOKEN` (shared token), `AGENT_HUB_DIR` (host hub path → `/data`),
+`AGORA_PORT` (default 8910). First start auto-runs `hubcli init`; later starts
+reuse the existing hub. The image never touches `~/.agent-hub-path`.
+
 ## Quick start
 
 ```bash
