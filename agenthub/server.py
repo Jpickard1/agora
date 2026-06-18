@@ -187,6 +187,60 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- projects (issue #22) -------------------------------------------
+    @app.get("/api/projects")
+    def projects_list(x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.project_list()
+
+    @app.get("/api/projects/{project_id}")
+    def project_get(project_id: str, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        p = store.project_get(project_id)
+        if p is None:
+            raise HTTPException(404, "no such project")
+        return p
+
+    @app.post("/api/projects")
+    def project_new(payload: dict = Body(...),
+                    x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        pid = (payload.get("id") or payload.get("name") or "").strip()
+        if not pid:
+            raise HTTPException(400, "id or name required")
+        name = payload.get("name") or pid
+        author = payload.get("author") or payload.get("author_name") or "web"
+        return store.project_new(pid, name=name, goal=payload.get("goal", ""),
+                                 owner=payload.get("owner", ""), created_by=author)
+
+    @app.post("/api/projects/{project_id}/add")
+    def project_add(project_id: str, payload: dict = Body(...),
+                    x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        if store.project_get(project_id, rollup=False) is None:
+            raise HTTPException(404, "no such project")
+        if payload.get("task"):
+            store.project_add_task(project_id, payload["task"])
+        if payload.get("channel"):
+            store.project_add_channel(project_id, payload["channel"])
+        if payload.get("milestone"):
+            store.project_add_milestone(project_id, payload["milestone"],
+                                        done=bool(payload.get("done")))
+        if payload.get("set_milestone"):
+            store.project_set_milestone(project_id, payload["set_milestone"],
+                                        bool(payload.get("done")))
+        if payload.get("owner") is not None or payload.get("goal") is not None:
+            store.project_update(project_id, owner=payload.get("owner"),
+                                 goal=payload.get("goal"))
+        return store.project_get(project_id)
+
+    @app.delete("/api/projects/{project_id}")
+    def project_delete(project_id: str, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        if not store.project_delete(project_id):
+            raise HTTPException(404, "no such project")
+        return {"ok": True}
+
     # -- shared knowledge base (issue #25) ------------------------------
     @app.get("/api/kb")
     def kb_list(q: str | None = None, tag: str | None = None,
