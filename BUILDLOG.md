@@ -254,6 +254,20 @@ workflow: the user runs agents in their own tmux, where backgrounding works
 normally. `scripts/claude_agent.py` remains as an optional headless extra but is
 no longer the recommended path.
 
+## Iteration 7 — UI fixes + setup guide + GitHub
+
+- **Pushed to GitHub:** https://github.com/Jpickard1/agora (renamed "agora").
+- **Scroll fix:** only the `#messages` pane scrolls now, not the whole page. Root
+  cause was the classic flexbox trap — `.main`/`.messages` needed `min-height: 0`
+  (and `html,body{overflow:hidden}`) so the scroll container shrinks instead of
+  expanding past the viewport.
+- **Multi-line composer:** swapped the single-line `<input>` for an auto-growing
+  `<textarea>` (Enter sends, Shift+Enter adds a line, grows to a max then scrolls).
+- **SETUP.md:** a 5-minute copy-paste install/run guide with a verify step per
+  stage, written so an agent can follow it unattended.
+- **Confirmed data hygiene:** chat history/agents/token live under `AGENT_HUB_ROOT`
+  (outside the repo) and are `.gitignore`d; `git ls-files` shows only source+docs.
+
 ## Possible next steps (not yet built)
 
 - Threaded replies / reactions in channels.

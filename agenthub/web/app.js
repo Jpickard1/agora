@@ -253,12 +253,29 @@ function scrollDown() {
 }
 
 /* ---------------- composer ---------------- */
+const msgInput = $("#msg-input");
+
+// Auto-grow the textarea to fit its content (CSS caps it at max-height).
+function autoGrow() {
+  msgInput.style.height = "auto";
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + "px";
+}
+msgInput.addEventListener("input", autoGrow);
+
+// Enter sends; Shift+Enter inserts a newline.
+msgInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    $("#composer").requestSubmit();
+  }
+});
+
 $("#composer").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const input = $("#msg-input");
-  const text = input.value.trim();
+  const text = msgInput.value.trim();
   if (!text) return;
-  input.value = "";
+  msgInput.value = "";
+  autoGrow();                 // shrink back to one line after sending
   const body = JSON.stringify({ text, author_name: state.name });
   try {
     if (state.view.type === "channel") {
@@ -270,7 +287,8 @@ $("#composer").addEventListener("submit", async (e) => {
       if (r && r.id) appendMessage(r);
     }
   } catch (err) {
-    input.value = text; // restore on failure
+    msgInput.value = text;    // restore on failure
+    autoGrow();
   }
 });
 
