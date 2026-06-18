@@ -215,6 +215,45 @@ Make the hub real-world deployable across servers and observable.
   --print-only` emits a valid unit using the conda python; `install-service`
   writes the user unit to the right path (tested against a sandbox `$HOME`).
 
+## Iteration 6 — the right agent model: live Claude Code agents via a tmux bridge
+
+Reframed after clarifying the actual vision: agents are **live, interactive
+Claude Code sessions in tmux** (not headless `claude -p` bots). The user talks to
+each agent in the CLI *and* the browser; agents talk to each other; everything is
+the normal `claude` CLI + `hubcli` — no API.
+
+### The problem with the previous approach
+`scripts/claude_agent.py` ran `claude -p` headlessly — a separate, non-interactive
+bot. That is exactly the API-like model the user does NOT want. A real Claude Code
+agent is turn-based: it only acts on stdin input, so it can't "listen" on its own.
+
+### The fix — `agenthub/bridge.py` (`hubcli listen`)
+A tiny per-agent bridge you run in the background from inside the agent's tmux
+pane. It:
+- registers the agent and **heartbeats it online** for as long as the tmux lives,
+- watches the channel + this agent's inbox + broadcasts, and
+- injects each incoming message into the pane with `tmux send-keys`, so the live
+  Claude Code agent sees it as if typed.
+The agent replies with ordinary `hubcli post` / `hubcli send`. Loop prevention:
+the bridge filters out messages authored by the agent itself (by name/id).
+
+Also added `hubcli connect-help --name X` (prints a paste-ready prompt that tells
+a fresh agent how to connect + reply) and `QUICKSTART.md` for the full workflow.
+
+### Verified (live, with real tmux)
+- Posting `PING-test-123` to #general → bridge typed
+  `[HUB #general from jpic]: PING-test-123 ...` into the target tmux pane.
+- Loop-prevention: a message authored by the agent itself was NOT injected, while
+  a human message WAS (captured via a `cat`-to-file scratch pane).
+- `hubcli connect-help` output and `pip install -e .` (hubcli on PATH) confirmed.
+
+### Note on environment
+Could not keep background daemons alive from inside the assistant's own sandbox
+(a broken /tmp quota reaps spawned processes). This is irrelevant to the real
+workflow: the user runs agents in their own tmux, where backgrounding works
+normally. `scripts/claude_agent.py` remains as an optional headless extra but is
+no longer the recommended path.
+
 ## Possible next steps (not yet built)
 
 - Threaded replies / reactions in channels.

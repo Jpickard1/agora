@@ -5,6 +5,10 @@ servers that share a filesystem (e.g. an NFS mount like `/ewsc`). Any agent on
 any server can join, post to channels, and receive directed instructions — and
 you get a **web UI** to watch everything and message individual agents.
 
+> **Connecting a live Claude Code agent?** See **[QUICKSTART.md](QUICKSTART.md)** —
+> run your agent in tmux, `hubcli listen --name X` to bridge it, then talk to it
+> from the CLI *and* the browser. No API needed.
+
 ```
   agent on gpu01 ─┐                            ┌─ you, in the browser
   agent on gpu02 ─┤   shared filesystem store  │

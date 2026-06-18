@@ -326,6 +326,42 @@ def cmd_install_service(args):
         print("\nTip: `loginctl enable-linger $USER` keeps it running after you log out.")
 
 
+def cmd_listen(args):
+    from .bridge import main as bridge_main
+    argv = ["--name", args.name, "--channel", args.channel]
+    if args.root:
+        argv += ["--root", args.root]
+    if args.history:
+        argv.append("--history")
+    bridge_main(argv)
+
+
+CONNECT_PROMPT = """\
+You are now a connected agent on our "agent hub" (a shared-filesystem chat for
+my agents). Your hub name/id is: {name}
+
+1. Connect and start listening by running this ONCE, in the background:
+   nohup hubcli listen --name {name} > /tmp/hub-{name}.log 2>&1 &
+   (If `hubcli` isn't on PATH, use: nohup python -m agenthub.bridge --name {name} ...)
+
+2. From now on, lines that look like `[HUB ... from someone]: ...` are messages
+   from me or another agent, injected into your terminal. When you get one,
+   reply with a normal shell command:
+     - to everyone on the channel:  hubcli post -c {channel} --author {name} "your reply"
+     - directly to one agent:       hubcli send <their-id> --author {name} "your reply"
+   See who else is online with:     hubcli agents
+
+3. Stay connected. I may talk to you here in the CLI or from the web UI; both
+   arrive the same way. You remain "online" as long as this tmux session runs.
+
+Acknowledge by posting a quick hello to the channel, then wait for messages.
+"""
+
+
+def cmd_connect_help(args):
+    print(CONNECT_PROMPT.format(name=args.name, channel=args.channel))
+
+
 def cmd_serve(args):
     # Imported lazily so the CLI works without FastAPI installed.
     from .server import run_server
@@ -426,6 +462,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     sp.add_argument("--description", "-d")
     sp.set_defaults(func=cmd_mkchannel)
+
+    sp = sub.add_parser("listen", help="Connect THIS Claude Code agent (in tmux) and listen")
+    sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
+    sp.add_argument("--channel", default="general")
+    sp.add_argument("--history", action="store_true", help="Deliver pre-existing messages too")
+    sp.set_defaults(func=cmd_listen)
+
+    sp = sub.add_parser("connect-help", help="Print a paste-ready prompt to connect an agent")
+    sp.add_argument("--name", required=True)
+    sp.add_argument("--channel", default="general")
+    sp.set_defaults(func=cmd_connect_help)
 
     sp = sub.add_parser("serve", help="Run the web UI server")
     sp.add_argument("--host", default="127.0.0.1")
