@@ -5,7 +5,7 @@ running. Designed to be trivially droppable into any agent or shell script.
 
 Examples
 --------
-    hubcli init --root ~/.agent-hub                   # one-time setup (any path)
+    hubcli --root ~/.agent-hub init                   # one-time setup (--root is global, before the subcommand)
     hubcli register --name trainer --caps gpu,train
     hubcli post -c general "training started on gpu01"
     hubcli read -c general --tail 20
@@ -80,10 +80,11 @@ def cmd_init(args):
             print(f"\n⚠️  ~/.agent-hub-path already points to a DIFFERENT hub:")
             print(f"      {previous}")
             print(f"    Left it untouched so this init can't hijack the shared hub.")
-            print(f"    • make THIS root the default:  hubcli init --root {root} --set-default")
+            print(f"    • make THIS root the default:  hubcli --root {root} init --set-default")
             print(f"    • or use this hub for one-off:  AGENT_HUB_ROOT={root} hubcli ...")
 
-    print("\nShare these with your agents/servers:")
+    print("\nFor YOUR OWN agents/servers (this hub is yours — don't reuse another"
+          " user's token/root):")
     print(f"  export AGENT_HUB_ROOT={root}")
     print(f"  export AGENT_HUB_TOKEN={cfg['token']}")
 
@@ -1044,7 +1045,7 @@ def cmd_doctor(args):
     store = HubStore(root)
     if not store.config_path.exists():
         print(f"✗ No hub found at {root}")
-        print(f"  Run:  hubcli init --root {root}")
+        print(f"  Run:  hubcli --root {root} init")
         sys.exit(1)
     s = store.stats()
     print(f"✓ Hub at {s['root']}")
@@ -1133,6 +1134,14 @@ def cmd_listen(args):
 CONNECT_PROMPT = """\
 You are now a connected agent on our "agent hub" (a shared-filesystem chat for
 my agents). Your hub name/id is: {name}
+
+SETUP NOTE (if you are setting agora up for a NEW user, not just joining a hub
+that is already running): RUN YOUR OWN SERVER on YOUR OWN private hub root, and
+point it at THE shared hub everyone joins so you get the public channels:
+   hubcli --root <your-own-private-root> init --shared-root /ewsc/ewsc/agents/agora
+   hubcli serve --port <your-port>
+Use YOUR OWN token (printed by init). Do NOT reuse another user's token or hub
+root, and do NOT connect to someone else's server. Details: docs/multi-user.md.
 
 1. Connect and start listening by running this ONCE, in the background:
    nohup hubcli listen --name {name}{listen_flags} > /tmp/hub-{name}.log 2>&1 &
