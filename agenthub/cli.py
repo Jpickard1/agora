@@ -520,6 +520,10 @@ def cmd_install_service(args):
 def cmd_listen(args):
     from .bridge import main as bridge_main
     argv = ["--name", args.name, "--channel", args.channel]
+    if getattr(args, "channels", None):
+        argv += ["--channels", args.channels]
+    if getattr(args, "all_channels", False):
+        argv.append("--all-channels")
     if args.root:
         argv += ["--root", args.root]
     if args.pane:
@@ -534,8 +538,9 @@ You are now a connected agent on our "agent hub" (a shared-filesystem chat for
 my agents). Your hub name/id is: {name}
 
 1. Connect and start listening by running this ONCE, in the background:
-   nohup hubcli listen --name {name} > /tmp/hub-{name}.log 2>&1 &
+   nohup hubcli listen --name {name}{listen_flags} > /tmp/hub-{name}.log 2>&1 &
    (If `hubcli` isn't on PATH, use: nohup python -m agenthub.bridge --name {name} ...)
+   (To follow several channels: --channels general,dev,alerts ; or every channel: --all-channels)
 
 2. From now on, lines that look like `[HUB ... from someone]: ...` are messages
    from me or another agent, injected into your terminal. When you get one,
@@ -552,7 +557,19 @@ Acknowledge by posting a quick hello to the channel, then wait for messages.
 
 
 def cmd_connect_help(args):
-    print(CONNECT_PROMPT.format(name=args.name, channel=args.channel))
+    # Mirror whatever channel selection the caller requested into the paste-ready
+    # listen command, and pick a sensible channel for the "reply here" examples.
+    if getattr(args, "all_channels", False):
+        listen_flags = " --all-channels"
+        channel = args.channel
+    elif getattr(args, "channels", None):
+        listen_flags = f" --channels {args.channels}"
+        channel = args.channels.split(",")[0].strip() or args.channel
+    else:
+        listen_flags = ""
+        channel = args.channel
+    print(CONNECT_PROMPT.format(name=args.name, channel=channel,
+                                listen_flags=listen_flags))
 
 
 def _tmux_has(session):
@@ -609,8 +626,10 @@ def cmd_up(args):
     else:
         _tmux_start("agora-manager-bridge",
                     f"AGENT_HUB_ROOT={root} {pybin} -m agenthub.cli listen "
-                    f"--name {manager} --pane {pane} > {root}/manager-bridge.log 2>&1")
-        print(f"  ✓ manager bridge  (agent '{manager}', pane {pane}, tmux: agora-manager-bridge)")
+                    f"--name {manager} --pane {pane} --all-channels "
+                    f"> {root}/manager-bridge.log 2>&1")
+        print(f"  ✓ manager bridge  (agent '{manager}', pane {pane}, "
+              f"all channels, tmux: agora-manager-bridge)")
 
     # 3. supervisor (keep-alive + issue ticker)
     _tmux_start("agora-supervisor",
@@ -814,7 +833,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
-    sp.add_argument("--channel", default="general")
+    sp.add_argument("--channel", default="general", help="Single channel to follow (default)")
+    sp.add_argument("--channels", help="Comma-separated channels to follow, e.g. general,dev,alerts")
+    sp.add_argument("--all-channels", dest="all_channels", action="store_true",
+                    help="Follow EVERY channel, including ones created later")
     sp.add_argument("--pane", help="tmux pane id to inject into (else auto-detect this pane)")
     sp.add_argument("--root", help="Hub root (else env/pointer)")
     sp.add_argument("--history", action="store_true", help="Deliver pre-existing messages too")
@@ -823,6 +845,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("connect-help", help="Print a paste-ready prompt to connect an agent")
     sp.add_argument("--name", required=True)
     sp.add_argument("--channel", default="general")
+    sp.add_argument("--channels", help="Comma-separated channels to follow")
+    sp.add_argument("--all-channels", dest="all_channels", action="store_true",
+                    help="Follow every channel")
     sp.set_defaults(func=cmd_connect_help)
 
     sp = sub.add_parser("up", help="One-command bootstrap: server + manager bridge + supervisor")
