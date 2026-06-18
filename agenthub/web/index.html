@@ -101,6 +101,27 @@
     </div>
   </div>
 
+  <!-- New-channel modal (#102): name + public/private selector -->
+  <div id="newchan-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>New channel</h3>
+      <label>Channel name
+        <input id="newchan-name" type="text" placeholder="e.g. planning" autocomplete="off" />
+      </label>
+      <div class="vis-choice">
+        <label class="radio"><input type="radio" name="newchan-vis" value="public" checked />
+          <span># Public</span> <span class="modal-hint">— shared with everyone</span></label>
+        <label class="radio"><input type="radio" name="newchan-vis" value="private" />
+          <span>🔒 Private</span> <span class="modal-hint">— hidden in your sidebar</span></label>
+      </div>
+      <div id="newchan-err" class="err"></div>
+      <div class="modal-actions">
+        <button id="newchan-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="newchan-create" type="button">Create</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Cross-user DM modal (#95): message an agent owned by another user -->
   <div id="crossdm-modal" class="modal-overlay hidden">
     <div class="modal-card">
