@@ -43,6 +43,7 @@ import subprocess
 import sys
 import time
 
+from . import transport as transport_mod
 from .config import resolve_root
 from .store import HubStore
 
@@ -251,33 +252,53 @@ def main(argv=None):
                     help="See the full channel stream: inject every #channel message even if it @mentions only other agents")
     ap.add_argument("--no-receipts", dest="receipts", action="store_false",
                     help="Don't write a delivery receipt when a message is injected")
+    ap.add_argument("--transport", choices=["auto", "tmux", "file", "stdout"],
+                    default="auto",
+                    help="Delivery transport: tmux injection (Unix), a polled "
+                         "inbox file (Windows/no-tmux), or stdout. Default: auto.")
+    ap.add_argument("--inbox-file", default=None,
+                    help="Path for the 'file' transport (default <root>/inbox-<name>.txt)")
     args = ap.parse_args(argv)
-
-    pane = detect_pane(args.pane)
-    if not shutil.which("tmux"):
-        print("[bridge] WARNING: tmux not found; will print messages instead of injecting.")
-        pane = None
-    elif not pane:
-        print("[bridge] WARNING: no tmux pane detected; will print messages instead. "
-              "Run me from inside the agent's tmux pane, or pass --pane.")
 
     store = HubStore(resolve_root(args.root))
     store.init()
     aid = args.name  # keep it simple: the agent's name IS its hub id (use unique names)
-    host = os.uname().nodename.split(".")[0]
+    host = transport_mod.hostname()
+
+    # Choose a cross-platform delivery transport (issue #15). tmux when usable;
+    # otherwise a file inbox the agent tails — the Windows / no-tmux path.
+    pane = detect_pane(args.pane)
+    has_tmux = bool(shutil.which("tmux"))
+    kind = transport_mod.choose_transport(args.transport, has_tmux, bool(pane))
+    if kind == "tmux":
+        transport = transport_mod.TmuxTransport(
+            pane, inject, lambda: pane_busy(capture_pane(pane)))
+    elif kind == "file":
+        inbox = args.inbox_file or transport_mod.default_inbox_path(store.root, aid)
+        transport = transport_mod.FileTransport(inbox)
+        if args.transport == "auto" and not has_tmux:
+            print(f"[bridge] tmux not found → file transport: delivering to {inbox}")
+        elif args.transport == "auto" and not pane:
+            print(f"[bridge] no tmux pane → file transport: delivering to {inbox}")
+        pane = None   # no tmux idle-detection in file mode
+    else:  # stdout
+        transport = transport_mod.StdoutTransport()
+        pane = None
     session = detect_session(pane)
-    # A5: stash the tmux session in `extra` (no store schema change) so the
-    # roster panel can show name / server (host) / tmux session / status.
+    # A5: stash the tmux session + transport in `extra` (no store schema change)
+    # so the roster panel can show name / server / tmux session / status.
     store.register_agent(aid, args.name, host=host, pid=os.getpid(),
                          capabilities=["claude-code"],
-                         extra={"tmux_session": session})
+                         extra={"tmux_session": session, "transport": transport.kind})
     channels = resolve_channels(store, args.all_channels, args.channels,
                                 args.channel)
     store.heartbeat(aid, status="listening", activity=channels_activity(channels))
-    idle_mode = pane is not None and not args.no_idle_wait
+    # Idle-wait (settle detection) is a tmux-only concept; file/stdout deliver now.
+    idle_mode = transport.kind == "tmux" and not args.no_idle_wait
     chans_desc = ("ALL channels (auto-following new ones)" if args.all_channels
                   else ", ".join("#" + c for c in channels) or "(none)")
-    print(f"[bridge] '{args.name}' connected (id={aid}, host={host}, pane={pane}). "
+    print(f"[bridge] '{args.name}' connected (id={aid}, host={host}, "
+          f"transport={transport.kind}). "
           f"Listening on {chans_desc} + direct inbox + broadcasts. "
           f"idle-wait={'on' if idle_mode else 'off'}.")
 
@@ -300,13 +321,10 @@ def main(argv=None):
 
     def deliver(where: str, m: dict) -> None:
         line = f"[HUB {where} from {m['author_name']}]: {m['text']}"
-        if pane:
-            inject(pane, line)
-        else:
-            print(line)
-        # A2: confirm delivery back to the sender (only for real injections, and
-        # never for our own messages — those are filtered out before delivery).
-        if pane and args.receipts:
+        transport.deliver(line)
+        # A2: confirm delivery back to the sender for real deliveries (tmux/file),
+        # never for our own messages (filtered out before delivery) or stdout echo.
+        if args.receipts and transport.kind != "stdout":
             to, text, meta = build_receipt(m, aid, where)
             if to and to != aid:
                 try:
