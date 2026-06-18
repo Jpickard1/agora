@@ -250,6 +250,38 @@ def cmd_agents(args):
         print(f"{dot:8} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
 
 
+def cmd_usage(args):
+    store = _store(args)
+    u = store.usage_stats(online_window=args.window)
+    if args.json:
+        print(json.dumps(u, indent=2))
+        return
+    t = u["totals"]
+    h = u["host"]
+    host_bits = [h.get("host", "?")]
+    if "cpu_percent" in h:
+        host_bits.append(f"cpu {h['cpu_percent']}%")
+    if "mem_percent" in h:
+        host_bits.append(f"mem {h['mem_percent']}% "
+                         f"({h.get('mem_used_gb')}/{h.get('mem_total_gb')}G)")
+    if "load1" in h:
+        host_bits.append(f"load {h['load1']}")
+    print("agora utilization")
+    print(f"  agents: {t['agents']} ({t['online']} online)   "
+          f"messages: {t['messages']}   "
+          f"tasks: {t['tasks']} ({t['tasks_done']} done, "
+          f"{t['tasks_per_agent']}/agent)")
+    print(f"  host:   {'  '.join(host_bits)}")
+    print()
+    print(f"{'STATUS':8} {'AGENT':28} {'MSGS':>6} {'TASKS':>6} {'DONE':>5} {'RUN':>4}")
+    for a in u["agents"]:
+        dot = "🟢" if a.get("online") else "⚪"
+        print(f"{dot:8} {a['name'][:28]:28} {a['messages']:>6} "
+              f"{a['tasks_total']:>6} {a['tasks_done']:>5} {a['tasks_running']:>4}")
+    if not u["agents"]:
+        print("(no agents registered)")
+
+
 def cmd_channels(args):
     store = _store(args)
     chans = store.list_channels()
@@ -655,6 +687,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_agents)
+
+    sp = sub.add_parser("usage", help="System utilization: per-agent + host metrics")
+    sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_usage)
 
     sp = sub.add_parser("channels", help="List channels")
     sp.add_argument("--json", action="store_true")
