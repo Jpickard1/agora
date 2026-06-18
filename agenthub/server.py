@@ -214,12 +214,15 @@ def create_app(root: str | Path) -> FastAPI:
     # -- full-text search (issue #51) -----------------------------------
     @app.get("/api/search")
     def search(q: str, channel: str | None = None, limit: int = 50,
-               include_tasks: bool = True,
+               include_tasks: bool = True, author: str | None = None,
+               since: float = 0.0, include_archive: bool = False,
                x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
         channels = [c.strip() for c in channel.split(",") if c.strip()] if channel else None
         return store.search_messages(q, channels=channels, limit=limit,
-                                     include_tasks=include_tasks)
+                                     include_tasks=include_tasks,
+                                     author=author, since_ts=since,
+                                     include_archive=include_archive)
 
     # -- @mentions: messages that mention a viewer (issue #52) -----------
     @app.get("/api/mentions")
