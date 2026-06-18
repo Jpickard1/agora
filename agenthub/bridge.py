@@ -93,6 +93,30 @@ def capture_pane(pane: str) -> str:
         return ""
 
 
+def detect_session(pane: str | None) -> str | None:
+    """The tmux session name containing `pane` (for the roster panel)."""
+    if not pane:
+        return None
+    try:
+        return subprocess.check_output(
+            ["tmux", "display-message", "-p", "-t", pane, "#{session_name}"],
+            text=True, stderr=subprocess.DEVNULL,
+        ).strip() or None
+    except Exception:
+        return None
+
+
+def compute_status(has_pane: bool, busy: bool, pending: int) -> str:
+    """A5 live status for the roster: working (mid-turn) > waiting (idle with
+    queued messages about to deliver) > listening (idle, nothing queued).
+    Without a pane we can't tell, so we report 'listening'."""
+    if has_pane and busy:
+        return "working"
+    if pending:
+        return "waiting"
+    return "listening"
+
+
 def pane_busy(text: str) -> bool:
     """True if the pane shows the agent is mid-turn (not ready for input)."""
     low = text.lower()
@@ -198,9 +222,13 @@ def main(argv=None):
     store.init()
     aid = args.name  # keep it simple: the agent's name IS its hub id (use unique names)
     host = os.uname().nodename.split(".")[0]
+    session = detect_session(pane)
+    # A5: stash the tmux session in `extra` (no store schema change) so the
+    # roster panel can show name / server (host) / tmux session / status.
     store.register_agent(aid, args.name, host=host, pid=os.getpid(),
-                         capabilities=["claude-code"])
-    store.heartbeat(aid, activity=f"listening on #{args.channel}")
+                         capabilities=["claude-code"],
+                         extra={"tmux_session": session})
+    store.heartbeat(aid, status="listening", activity=f"on #{args.channel}")
     idle_mode = pane is not None and not args.no_idle_wait
     print(f"[bridge] '{args.name}' connected (id={aid}, host={host}, pane={pane}). "
           f"Listening on #{args.channel} + direct inbox + broadcasts. "
@@ -239,7 +267,14 @@ def main(argv=None):
 
     try:
         while True:
-            store.heartbeat(aid, activity=f"listening on #{args.channel}")
+            # Sample the pane once per loop: drives both the live roster status
+            # (A5) and the idle-delivery gate (A1).
+            snap = capture_pane(pane) if pane else ""
+            busy = pane_busy(snap) if pane else False
+            if idle_mode:
+                settled = (snap == last_snapshot)
+                last_snapshot = snap
+                idle_streak = idle_streak + 1 if (not busy and settled) else 0
 
             # 1. Collect new messages from all sources into the queue (in order).
             fresh: list[tuple[str, dict]] = []
@@ -263,6 +298,10 @@ def main(argv=None):
             now = time.time()
             pending.extend((now, where, m) for where, m in fresh)
 
+            # A5: report a live status for the roster (preserve free-text activity).
+            store.heartbeat(aid, status=compute_status(pane is not None, busy,
+                                                       len(pending)))
+
             # 2. Try to flush the queue when the pane is ready.
             if pending:
                 if not idle_mode:
@@ -272,12 +311,6 @@ def main(argv=None):
                     pending.clear()
                     idle_streak = 0
                 else:
-                    snap = capture_pane(pane)
-                    busy = pane_busy(snap)
-                    settled = (snap == last_snapshot)
-                    last_snapshot = snap
-                    idle_streak = idle_streak + 1 if (not busy and settled) else 0
-
                     head_age = time.time() - pending[0][0]
                     ready = idle_streak >= args.settle_checks
                     if ready_to_flush(idle_streak, args.settle_checks,

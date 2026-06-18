@@ -110,6 +110,26 @@ def test_build_receipt_is_filtered_as_self_message():
     assert bridge.is_self_message(receipt_msg, "manager", "manager") is True
 
 
+# --- A5: live roster status ----------------------------------------------
+
+def test_compute_status_working_when_busy():
+    assert bridge.compute_status(has_pane=True, busy=True, pending=0) == "working"
+    # busy wins even if messages are queued
+    assert bridge.compute_status(has_pane=True, busy=True, pending=3) == "working"
+
+
+def test_compute_status_waiting_when_idle_with_queue():
+    assert bridge.compute_status(has_pane=True, busy=False, pending=2) == "waiting"
+
+
+def test_compute_status_listening_when_idle_empty():
+    assert bridge.compute_status(has_pane=True, busy=False, pending=0) == "listening"
+
+
+def test_compute_status_no_pane_defaults_listening():
+    assert bridge.compute_status(has_pane=False, busy=False, pending=0) == "listening"
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0
