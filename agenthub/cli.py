@@ -154,18 +154,35 @@ def cmd_register(args):
 
 def cmd_post(args):
     store = _store(args)
-    text = args.text if args.text is not None else sys.stdin.read().strip()
-    if not text:
-        print("Nothing to post (empty text).", file=sys.stderr)
+    image_path = getattr(args, "image", None)
+    # With --image we don't block on stdin; text is optional (image-only is fine).
+    if args.text is not None:
+        text = args.text
+    elif image_path:
+        text = ""
+    else:
+        text = sys.stdin.read().strip()
+    meta = {"alert": True} if getattr(args, "alert", False) else {}
+    if image_path:
+        try:
+            with open(image_path, "rb") as f:
+                raw = f.read()
+        except OSError as e:
+            print(f"Cannot read image: {e}", file=sys.stderr)
+            sys.exit(1)
+        ext = image_path.rsplit(".", 1)[-1] if "." in image_path else "bin"
+        meta["image"] = store.save_upload(raw, ext)   # filesystem-direct (#117)
+    if not text and not meta.get("image"):
+        print("Nothing to post (empty text and no --image).", file=sys.stderr)
         sys.exit(1)
     name = args.author or "cli"
-    meta = {"alert": True} if getattr(args, "alert", False) else None
     m = store.post_channel(args.channel, text, author=args.id or name,
                            author_name=name, author_kind=args.kind,
-                           host=socket.gethostname().split(".")[0], meta=meta,
+                           host=socket.gethostname().split(".")[0], meta=meta or None,
                            reply_to=getattr(args, "reply_to", None))
     reply = f" ↪reply to {args.reply_to[:8]}" if getattr(args, "reply_to", None) else ""
-    print(f"{'🚨 Alert posted' if meta else 'Posted'} to #{m.channel} ({m.id[:8]}){reply}")
+    img = " 📎image" if meta.get("image") else ""
+    print(f"{'🚨 Alert posted' if meta.get('alert') else 'Posted'} to #{m.channel} ({m.id[:8]}){reply}{img}")
 
 
 def cmd_alert(args):
@@ -1430,6 +1447,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--kind", default="agent")
     sp.add_argument("--alert", action="store_true", help="High-visibility alert (white bg/black text/🚨, pinned)")
     sp.add_argument("--reply-to", dest="reply_to", help="Parent message id (threaded reply, #64)")
+    sp.add_argument("--image", help="Attach an image/figure file (path); text optional (#117)")
     sp.set_defaults(func=cmd_post)
 
     sp = sub.add_parser("alert", help="Post a high-visibility alert (must-read; pinned + 🚨)")
