@@ -291,6 +291,55 @@ def cmd_digest(args):
             print(f"  [{_fmt_ts(e['ts'])}] {e['task']} → {e['status']} by {e.get('by') or '?'}")
 
 
+def cmd_catchup(args):
+    """'What happened while you were away' — a personalized, READ-ONLY catch-up
+    brief for the calling user (#113). Complements `digest` (#79) by being scoped
+    to YOU + your open items."""
+    store = _store(args)
+    name = args.name or args.author or "cli"
+    since_ts = None
+    if args.since:
+        secs = _parse_duration(args.since)
+        if secs:
+            since_ts = time.time() - secs
+    c = store.catchup(name, since_ts=since_ts)
+    if args.json:
+        print(json.dumps(c, indent=2))
+        return
+    t = c["totals"]
+    print(f"🗒️  Catch-up for @{name} — since {_fmt_ts(c['since'])}  ·  "
+          f"{t['new_messages']} new msgs, {t['mentions']} mentions, {t['unread_dms']} DMs, "
+          f"{t['open_tasks']} open tasks, {t['task_changes']} task changes, {t['alerts']} alerts")
+    if c["alerts"]:
+        print("\n🚨 Alerts:")
+        for a in c["alerts"]:
+            print(f"  [{_fmt_ts(a['ts'])}] #{a['channel']} {a['author']}: {a['text']}")
+    if c["mentions"]:
+        print("\n💬 @mentions awaiting you:")
+        for m in c["mentions"]:
+            print(f"  [{_fmt_ts(m['ts'])}] #{m['channel']} {m['author']}: {m['text']}")
+    if c["unread_dms"]:
+        print(f"\n📨 Unread DMs ({len(c['unread_dms'])}):")
+        for m in c["unread_dms"]:
+            print(f"  [{_fmt_ts(m['ts'])}] {m.get('author_name') or m.get('author')}: {m['text']}")
+    if c["open_tasks"]:
+        print("\n📋 Your open tasks:")
+        for tk in c["open_tasks"]:
+            print(f"  {tk['id']} — {tk['status']} — {tk.get('title', '')}")
+    if c["task_changes"]:
+        print("\n🔧 Task-board changes:")
+        for e in c["task_changes"]:
+            print(f"  [{_fmt_ts(e['ts'])}] {e['task']} → {e['status']} by {e.get('by') or '?'}")
+    active = [ch for ch in c["channels"] if ch["messages"]]
+    if active:
+        print("\n📊 New activity by channel:")
+        for ch in active:
+            print(f"  #{ch['channel']:18} {ch['messages']:4} msgs")
+    if not (c["alerts"] or c["mentions"] or c["unread_dms"] or c["open_tasks"]
+            or c["task_changes"] or active):
+        print("\n✓ All caught up — nothing new since you were last here.")
+
+
 def cmd_firehose(args):
     store = _store(args)
     msgs = store.firehose(limit=args.tail or 200)
@@ -1423,6 +1472,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--since", default="24h", help="Window, e.g. 24h, 7d, 30m, 2w (default 24h; 'all' for everything)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_digest)
+
+    sp = sub.add_parser("catchup",
+                        help="'What happened while you were away' — personalized catch-up (#113)")
+    sp.add_argument("--name", help="Who you are (the viewer); defaults to --author")
+    sp.add_argument("--author", help="Alias for --name")
+    sp.add_argument("--since", help="Override window, e.g. 12h, 2d (default: since your last activity)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_catchup)
 
     # full-text search across channels/inboxes/broadcasts/tasks (issue #51)
     sp = sub.add_parser("search", help="Full-text search the hub")
