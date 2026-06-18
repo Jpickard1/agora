@@ -131,10 +131,47 @@ def cmd_send(args):
         print("Nothing to send (empty text).", file=sys.stderr)
         sys.exit(1)
     name = args.author or "human:cli"
+    # Cross-user DM (#88): `send <user>:<agent>` routes via the shared DM area
+    # (a different user's inbox is 0700, so we can't write it directly).
+    if ":" in args.to:
+        from . import crossdm
+        import getpass
+        sr = store.shared_root()
+        if not sr:
+            print("Cross-user send needs a shared hub (init --shared-root ...).",
+                  file=sys.stderr)
+            sys.exit(1)
+        from_user = getattr(args, "user", None) or getpass.getuser()
+        r = crossdm.post_cross_user_dm(str(sr), args.to, from_user,
+                                       args.id or name, text)
+        if not r.get("ok"):
+            print(f"✗ {r.get('reason')}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Sent cross-user DM to {args.to} ({r['msg']['id'][:8]}) via shared hub")
+        return
     m = store.post_inbox(args.to, text, author=args.id or name,
                          author_name=name, author_kind=args.kind,
                          host=socket.gethostname().split(".")[0])
     print(f"Sent instruction to @{m.to} ({m.id[:8]})")
+
+
+def cmd_participants(args):
+    from . import participants
+    store = _store(args)
+    sr = store.shared_root()
+    if not sr:
+        print("(no shared hub configured — set one with: init --shared-root <dir>)")
+        return
+    parts = participants.list_participants(str(sr), online_window=args.window)
+    if args.json:
+        print(json.dumps(parts, indent=2)); return
+    if not parts:
+        print("(no participants registered on the shared hub yet)"); return
+    for p in parts:
+        dot = "🟢" if p["online"] else "⚪"
+        agents = ", ".join(f"{a['name']}{'' if a['online'] else ' (off)'}"
+                           for a in p["agents"])
+        print(f"{dot} {p['user']:16} {p['online_agents']}/{len(p['agents'])} online   {agents}")
 
 
 def cmd_broadcast(args):
@@ -1336,6 +1373,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--tail", type=int)
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_inbox)
+
+    sp = sub.add_parser("participants", help="List people/agents on the SHARED hub (#86)")
+    sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_participants)
 
     sp = sub.add_parser("agents", help="List registered agents + presence")
     sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")

@@ -150,6 +150,32 @@ def detect_stalled(running, now, threshold, alerted, activity_ts):
     return to_alert, active
 
 
+def _whoami():
+    import os as _os
+    try:
+        import getpass
+        return _os.environ.get("AGORA_USER") or getpass.getuser()
+    except Exception:
+        return _os.environ.get("AGORA_USER") or "user"
+
+
+def drain_cross_user_inbox(store, shared_root, my_user, cursor, seen):
+    """Cross-user DM delivery (#88): pull new DMs for `my_user` from the shared
+    area and post_inbox() each into the local (recipient) inbox. Returns
+    (n_delivered, new_cursor, seen). No-op without a shared_root."""
+    from . import crossdm
+    if not shared_root:
+        return 0, cursor, seen
+    msgs, new_cursor, seen = crossdm.drain_shared_dms(str(shared_root), my_user,
+                                                      since_ts=cursor, seen=seen)
+    for m in msgs:
+        store.post_inbox(m.get("to"), m.get("text", ""),
+                         author=f"{m.get('from_user')}:{m.get('author')}",
+                         author_name=m.get("author_name") or m.get("author"),
+                         author_kind="agent", host="cross-user")
+    return len(msgs), new_cursor, seen
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="agora-supervisor")
     ap.add_argument("--manager", default="manager", help="Manager agent id to keep alive + tick")
@@ -214,6 +240,10 @@ def main(argv=None):
     repo_dir = args.repo_dir or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     print(f"[supervisor] stall-detector: alert after {int(args.stall_after)}s "
           f"of no commit/hub activity (repo {repo_dir})", flush=True)
+    cu_cursor, cu_seen, cu_user = 0.0, set(), _whoami()   # cross-user DM drain (#88)
+    if store.shared_root():
+        print(f"[supervisor] cross-user DM drain on for user '{cu_user}' "
+              f"(shared_root {store.shared_root()})", flush=True)
     while True:
         try:
             if ensure_server(args.port, serve_cmd):
@@ -280,6 +310,13 @@ def main(argv=None):
                     author_kind="system", host="supervisor", meta={"alert": True})
                 stall_alerted.add(t["id"])
                 print(f"[supervisor] flagged STALLED task {t['id']}", flush=True)
+
+            # Cross-user DM delivery (#88): drain the shared DM area into local
+            # inboxes. No-op unless a shared_root is configured (gated on jpic).
+            _n, cu_cursor, cu_seen = drain_cross_user_inbox(
+                store, store.shared_root(), cu_user, cu_cursor, cu_seen)
+            if _n:
+                print(f"[supervisor] delivered {_n} cross-user DM(s)", flush=True)
 
             # GitHub <-> task sync (issue #9): push any new status transitions to
             # the linked issues (idempotent; no-op for tasks without a ref).
