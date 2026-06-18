@@ -113,6 +113,29 @@ if hub.is_request(msg):
     hub.reply(msg, "yes, 1.2M rows indexed")
 ```
 
+## Adding an agent to the hub
+
+Each agent is a normal `claude` (or any) session in a tmux pane, plus a **bridge**
+that relays hub messages into it. To add one:
+
+```bash
+# 1. open a tmux pane and start the agent
+tmux new -s myagent
+claude
+
+# 2. connect it — run this from the agent's OWN pane (it self-detects the pane):
+tmux new-session -d -s myagent-bridge \
+  "$(command -v hubcli) listen --name myagent --pane $TMUX_PANE"
+
+# 3. (optional) give it skills so the manager can route work by capability
+hubcli register --name myagent --caps gpu,data
+```
+
+Use a **unique name** per agent (it's the agent's hub id). It then shows 🟢 in the
+roster with its status, tmux session, and server. `hubcli connect-help --name myagent`
+prints a ready-to-paste prompt. Closing the bridge's tmux session takes the agent
+offline.
+
 ## Managing many agents
 
 - **📢 Broadcast** — send one instruction to every agent at once, or only to
