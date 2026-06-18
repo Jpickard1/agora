@@ -268,7 +268,42 @@ no longer the recommended path.
 - **Confirmed data hygiene:** chat history/agents/token live under `AGENT_HUB_ROOT`
   (outside the repo) and are `.gitignore`d; `git ls-files` shows only source+docs.
 
+## Iteration 8 — one-command manager bootstrap
+
+Goal: make running the whole system trivial — `cd` into the repo, start a Claude
+Code agent, and have it auto-become a "manager" that keeps the hub alive and farms
+out GitHub issues. Splits cleanly into dumb daemons (keep-alive) + the thinking
+agent (turn-based), since an interactive agent can't also be a forever-loop.
+
+### Added
+- `agenthub/supervisor.py` — a keep-alive daemon: restarts the server / manager
+  bridge if they die, and **ticks the manager's inbox** on a schedule so the
+  turn-based manager wakes up to check issues. (It never reasons.)
+- `hubcli up` — idempotent one-command bootstrap: starts the web server, the
+  manager's own bridge, and the supervisor, each in a durable detached tmux
+  session. `--dev` uses fast cadences (tick 30s); default tick 3 min. `--manager`,
+  `--pane`, `--port`, `--tick`, `--watch` configurable.
+- `hubcli down` — stops all three sessions cleanly.
+- `CLAUDE.md` — the manager playbook: an agent launched in this repo reads it and
+  knows to run `hubcli up`, then read issues from `$AGORA_GH_REPO` (the user's
+  **MGB-main** repo) and dispatch to workers by capability. Includes guardrails
+  (don't double-assign, human-gate risky work, manager dispatches but doesn't do).
+
+### Verified (end-to-end, real tmux)
+`hubcli up --manager testmgr --pane <scratch> --port 8915 --tick 3` brought up
+server (health 200) + manager bridge (testmgr online) + supervisor; the tick was
+delivered into the manager's pane (`⏰ tick…`); `hubcli down` stopped all three.
+
+### Workflow it enables
+cd into repo → start `claude` (auto-manager via CLAUDE.md) → it runs `hubcli up`
+→ server+bridge+supervisor come up → start workers and connect them → open UI.
+The manager is ticked to check MGB-main issues and dispatch.
+
 ## Possible next steps (not yet built)
 
-- Threaded replies / reactions in channels.
-- Optional per-agent tokens for auditing (auth model is pluggable in `server.py`).
+- Bridge reliability: pane-busy/idle detection before inject; delivery receipts;
+  loop-prevention by stable id (owned by worker1 in the live multi-agent session).
+- Durable task store + atomic claim protocol (issue→agent→status), so the manager
+  reads state instead of re-deriving from chat.
+- Security on the inject path: sanitization, per-agent DM allowlist, rate limiting.
+- Tests for bridge/supervisor/manager; conversation/task-board views.

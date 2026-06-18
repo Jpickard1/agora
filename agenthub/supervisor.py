@@ -1,0 +1,106 @@
+"""agora supervisor — keep the hub alive and tick the manager.
+
+This is the "dumb background daemon" half of the manager design: it never
+thinks, it just keeps infrastructure running and pokes the manager on a
+schedule. It is started by `hubcli up` in its own detached tmux session.
+
+Responsibilities:
+  1. Keep the web server responding — restart it (in tmux) if it dies.
+  2. Keep the manager's bridge alive — if the manager drops off the roster, its
+     bridge died, so restart it (needs the manager's tmux pane).
+  3. Tick the manager — periodically drop a message into the manager's inbox so
+     the (turn-based) manager wakes up and checks GitHub issues.
+
+All the actual reasoning (reading issues, deciding assignments) is done by the
+manager *agent* when it receives a tick — never here.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+from .config import resolve_root
+from .store import HubStore
+
+PYBIN = sys.executable
+
+
+def _server_ok(port: int) -> bool:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def _tmux_start(session: str, command: str) -> None:
+    """(Re)start a detached tmux session running `command`."""
+    subprocess.run(["tmux", "kill-session", "-t", session],
+                   stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, command], check=False)
+
+
+def _agent_online(store: HubStore, agent_id: str, window: float = 30.0) -> bool:
+    rec = store.get_agent(agent_id)
+    if not rec:
+        return False
+    return (time.time() - rec.get("last_seen", 0)) <= window and rec.get("status") != "offline"
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="agora-supervisor")
+    ap.add_argument("--manager", default="manager", help="Manager agent id to keep alive + tick")
+    ap.add_argument("--manager-pane", default="", help="tmux pane of the manager (to restart its bridge)")
+    ap.add_argument("--port", type=int, default=8910)
+    ap.add_argument("--root", default=None)
+    ap.add_argument("--channel", default="general")
+    ap.add_argument("--watch-interval", type=float, default=15.0, help="liveness check cadence (s)")
+    ap.add_argument("--tick-interval", type=float, default=180.0, help="manager issue-check cadence (s)")
+    args = ap.parse_args(argv)
+
+    root = str(resolve_root(args.root))
+    store = HubStore(root)
+    store.init()
+
+    serve_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli serve "
+                 f"--host 127.0.0.1 --port {args.port} > {root}/server.log 2>&1")
+    bridge_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli listen "
+                  f"--name {args.manager} --pane {args.manager_pane} "
+                  f"> {root}/manager-bridge.log 2>&1")
+
+    print(f"[supervisor] up — port={args.port} manager={args.manager} "
+          f"watch={args.watch_interval}s tick={args.tick_interval}s", flush=True)
+    last_tick = 0.0
+    while True:
+        try:
+            if not _server_ok(args.port):
+                print("[supervisor] server not responding → restarting", flush=True)
+                _tmux_start("agora-server", serve_cmd)
+                time.sleep(3)
+
+            if args.manager_pane and not _agent_online(store, args.manager):
+                print(f"[supervisor] manager '{args.manager}' offline → restarting its bridge", flush=True)
+                _tmux_start("agora-manager-bridge", bridge_cmd)
+
+            now = time.time()
+            if now - last_tick >= args.tick_interval:
+                last_tick = now
+                store.post_inbox(
+                    args.manager,
+                    "⏰ tick: check GitHub issues (label 'ready') and dispatch any new "
+                    "ones to available workers. Skip issues already assigned/claimed.",
+                    author="system:supervisor", author_name="supervisor",
+                    author_kind="system", host="supervisor")
+                print("[supervisor] ticked manager", flush=True)
+        except Exception as e:
+            print(f"[supervisor] error: {e}", flush=True)
+        time.sleep(args.watch_interval)
+
+
+if __name__ == "__main__":
+    main()

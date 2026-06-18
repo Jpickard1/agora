@@ -364,6 +364,88 @@ def cmd_connect_help(args):
     print(CONNECT_PROMPT.format(name=args.name, channel=args.channel))
 
 
+def _tmux_has(session):
+    import subprocess
+    return subprocess.run(["tmux", "has-session", "-t", session],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+
+
+def _tmux_start(session, command):
+    import subprocess
+    subprocess.run(["tmux", "kill-session", "-t", session], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(["tmux", "new-session", "-d", "-s", session, command], check=False)
+
+
+def cmd_up(args):
+    """One-command bootstrap: bring up the server, the manager's own bridge, and
+    the supervisor — all in durable detached tmux sessions. Idempotent."""
+    import subprocess, sys, time, urllib.request
+    root = resolve_root(args.root)
+    store = HubStore(root)
+    store.init()
+    pybin = sys.executable
+    pane = args.pane or os.environ.get("TMUX_PANE", "")
+    manager, port = args.manager, args.port
+    tick = 30.0 if args.dev else args.tick
+    watch = 10.0 if args.dev else args.watch
+
+    def server_ok():
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
+                return r.status == 200
+        except Exception:
+            return False
+
+    print(f"agora up{' (dev mode)' if args.dev else ''}:")
+
+    # 1. web server
+    if server_ok():
+        print(f"  ✓ server already running on :{port}")
+    else:
+        _tmux_start("agora-server",
+                    f"AGENT_HUB_ROOT={root} {pybin} -m agenthub.cli serve "
+                    f"--host 127.0.0.1 --port {port} > {root}/server.log 2>&1")
+        for _ in range(12):
+            time.sleep(1)
+            if server_ok():
+                break
+        print(f"  {'✓' if server_ok() else '✗'} server on :{port}  (tmux: agora-server)")
+
+    # 2. manager's own bridge (so the manager agent is connected + heartbeating)
+    if not pane:
+        print("  ! no tmux pane detected — run `hubcli up` from inside the manager's "
+              "tmux pane, or pass --pane <id>. Skipping manager bridge.")
+    else:
+        _tmux_start("agora-manager-bridge",
+                    f"AGENT_HUB_ROOT={root} {pybin} -m agenthub.cli listen "
+                    f"--name {manager} --pane {pane} > {root}/manager-bridge.log 2>&1")
+        print(f"  ✓ manager bridge  (agent '{manager}', pane {pane}, tmux: agora-manager-bridge)")
+
+    # 3. supervisor (keep-alive + issue ticker)
+    _tmux_start("agora-supervisor",
+                f"AGENT_HUB_ROOT={root} {pybin} -m agenthub.supervisor "
+                f"--manager {manager} --manager-pane {pane} --port {port} "
+                f"--tick-interval {tick} --watch-interval {watch} > {root}/supervisor.log 2>&1")
+    print(f"  ✓ supervisor  (tick={int(tick)}s, watch={int(watch)}s, tmux: agora-supervisor)")
+
+    cfg = store.get_config() or {}
+    print(f"\n  UI:    http://127.0.0.1:{port}/")
+    if cfg.get("token"):
+        print(f"  token: {cfg['token']}")
+    print(f"  Manager '{manager}' is live; it will be ticked to check GitHub issues every {int(tick)}s.")
+    print("  Stop everything with:  hubcli down")
+
+
+def cmd_down(args):
+    import subprocess
+    for s in ("agora-supervisor", "agora-manager-bridge", "agora-server"):
+        if _tmux_has(s):
+            subprocess.run(["tmux", "kill-session", "-t", s], stderr=subprocess.DEVNULL, check=False)
+            print(f"  stopped {s}")
+        else:
+            print(f"  (not running) {s}")
+
+
 def cmd_serve(args):
     # Imported lazily so the CLI works without FastAPI installed.
     from .server import run_server
@@ -477,6 +559,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--name", required=True)
     sp.add_argument("--channel", default="general")
     sp.set_defaults(func=cmd_connect_help)
+
+    sp = sub.add_parser("up", help="One-command bootstrap: server + manager bridge + supervisor")
+    sp.add_argument("--manager", default="manager", help="Manager agent name/id")
+    sp.add_argument("--pane", help="Manager's tmux pane (else auto-detect this pane)")
+    sp.add_argument("--port", type=int, default=8910)
+    sp.add_argument("--root", help="Hub root (else env/pointer)")
+    sp.add_argument("--tick", type=float, default=180.0, help="Issue-check cadence (s)")
+    sp.add_argument("--watch", type=float, default=15.0, help="Liveness-check cadence (s)")
+    sp.add_argument("--dev", action="store_true", help="Fast cadences for development (tick 30s, watch 10s)")
+    sp.set_defaults(func=cmd_up)
+
+    sp = sub.add_parser("down", help="Stop the server + manager bridge + supervisor")
+    sp.set_defaults(func=cmd_down)
 
     sp = sub.add_parser("serve", help="Run the web UI server")
     sp.add_argument("--host", default="127.0.0.1")
