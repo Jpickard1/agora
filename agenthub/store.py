@@ -538,9 +538,15 @@ class HubStore:
     def set_agent_status(self, agent_id: str, status: str) -> dict[str, Any] | None:
         return self.heartbeat(agent_id, status=status)
 
-    def list_agents(self, online_window: float = 30.0) -> list[dict[str, Any]]:
+    # Default: collapse agents offline longer than this into a "retired" group.
+    RETIRE_AFTER = 24 * 3600.0
+
+    def list_agents(self, online_window: float = 30.0,
+                    retire_after: float | None = None) -> list[dict[str, Any]]:
         if not self.agents_dir.exists():
             return []
+        if retire_after is None:
+            retire_after = self.RETIRE_AFTER
         now = _now()
         out = []
         for path in sorted(self.agents_dir.glob("*.json")):
@@ -556,6 +562,10 @@ class HubStore:
             else:
                 rec["online"] = age <= online_window
             rec["age"] = age
+            # Auto-retire (issue #11): an agent offline longer than retire_after
+            # is flagged so the roster can collapse it into a "retired" group.
+            # retire_after <= 0 disables retirement (nothing is ever retired).
+            rec["retired"] = bool(retire_after) and not rec["online"] and age > retire_after
             out.append(rec)
         return out
 

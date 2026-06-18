@@ -177,9 +177,10 @@ def create_app(root: str | Path) -> FastAPI:
 
     # -- agents + directed instructions ----------------------------------
     @app.get("/api/agents")
-    def agents(window: float = 30.0, x_hub_token: str | None = Header(default=None)):
+    def agents(window: float = 30.0, retire_after: float | None = None,
+               x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
-        return store.list_agents(online_window=window)
+        return store.list_agents(online_window=window, retire_after=retire_after)
 
     # -- task board: durable dispatch state for the UI -------------------
     @app.get("/api/tasks")
