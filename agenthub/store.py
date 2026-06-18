@@ -99,6 +99,32 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _search_terms(query: str) -> list[str]:
+    return [w for w in (query or "").strip().lower().split() if w]
+
+
+def _search_snippet(text: str, terms: list[str], width: int = 140) -> str:
+    """A one-line snippet of `text` centred on the first matched term, with
+    ellipses. Whitespace is collapsed so it renders on one line in the UI/CLI."""
+    flat = " ".join((text or "").split())
+    low = flat.lower()
+    pos = -1
+    for w in terms:
+        i = low.find(w)
+        if i != -1 and (pos == -1 or i < pos):
+            pos = i
+    if pos == -1:
+        return flat[:width] + ("…" if len(flat) > width else "")
+    start = max(0, pos - width // 3)
+    end = min(len(flat), start + width)
+    snippet = flat[start:end]
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(flat):
+        snippet = snippet + "…"
+    return snippet
+
+
 # Task lifecycle. A task moves open -> claimed -> running -> done|failed (or
 # cancelled). The current status is the latest status event; terminal statuses
 # end the task.
@@ -337,6 +363,71 @@ class HubStore:
         merged.extend(self.read_broadcast(since_ts=since_ts))
         merged.sort(key=lambda m: m["ts"])
         return merged[-limit:] if limit else merged
+
+    def search_messages(self, query: str, channels: list[str] | None = None,
+                        since_ts: float = 0.0, limit: int | None = 50,
+                        include_tasks: bool = True) -> list[dict[str, Any]]:
+        """Full-text search across channel messages, inboxes, broadcasts, and
+        (optionally) task history. Ranks by term hits — message text weighs most,
+        author less — newest-first on ties, and attaches a one-line snippet
+        centred on the first match. Each hit is:
+            {source, where, id, ts, author, text, snippet, score}
+        where source is channel|inbox|broadcast|task and `where` is the channel
+        name / agent id / "*" / task id. Empty query -> []. If `channels` is
+        given, only those channels are searched (scopes inboxes/broadcast/tasks
+        out)."""
+        terms = _search_terms(query)
+        if not terms:
+            return []
+        hits: list[dict[str, Any]] = []
+
+        def consider(m: dict, source: str, where: str) -> None:
+            text = m.get("text") or ""
+            low = text.lower()
+            author = (m.get("author_name") or m.get("author") or "")
+            alow = author.lower()
+            score = 0
+            for w in terms:
+                if w in low:
+                    score += 3
+                if w in alow:
+                    score += 1
+            if score:
+                hits.append({
+                    "source": source, "where": where, "id": m.get("id"),
+                    "ts": m.get("ts", 0), "author": author, "text": text,
+                    "snippet": _search_snippet(text, terms), "score": score,
+                })
+
+        scoped = channels is not None
+        names = ([_safe_name(c) for c in channels] if scoped
+                 else [c["name"] for c in self.list_channels()])
+        for name in names:
+            for m in self.read_channel(name, since_ts=since_ts):
+                consider(m, "channel", name)
+
+        if not scoped:
+            for m in self.read_broadcast(since_ts=since_ts):
+                consider(m, "broadcast", "*")
+            if self.inbox_dir.exists():
+                for idir in sorted(self.inbox_dir.iterdir()):
+                    if idir.is_dir():
+                        for m in self._read_dir_messages(idir, since_ts):
+                            consider(m, "inbox", idir.name)
+            if include_tasks:
+                for t in self.list_tasks():
+                    blob = " ".join(filter(None, [
+                        t.get("title"), t.get("brief"), t.get("ref"),
+                        " ".join(e.get("note", "") for e in t.get("events") or []),
+                    ]))
+                    consider({
+                        "text": blob, "id": t.get("id"),
+                        "author_name": t.get("claimed_by") or t.get("created_by"),
+                        "ts": t.get("updated_ts", 0),
+                    }, "task", t.get("id"))
+
+        hits.sort(key=lambda h: (h["score"], h["ts"]), reverse=True)
+        return hits[:limit] if limit else hits
 
     def comm_graph(self, since_ts: float = 0.0) -> dict[str, Any]:
         """Directed communication graph derived from directed messages: for each
