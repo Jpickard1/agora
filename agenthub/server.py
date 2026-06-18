@@ -37,6 +37,17 @@ def create_app(root: str | Path) -> FastAPI:
     store.init()  # idempotent: ensures dirs + default channel exist
     app = FastAPI(title="Agent Hub", version="1.0")
 
+    # -- never serve stale UI --------------------------------------------
+    # The web assets change often during development; tell browsers to always
+    # revalidate so a plain refresh always gets the latest HTML/CSS/JS.
+    @app.middleware("http")
+    async def no_cache_ui(request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.startswith("/static"):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return response
+
     # -- background auto-pruner (retention) ------------------------------
     @app.on_event("startup")
     async def _start_pruner():

@@ -32,7 +32,11 @@ body {
 /* ---------- layout ---------- */
 /* Lock the app to the viewport; only inner panes scroll, never the page. */
 html, body { height: 100%; overflow: hidden; }
-.app { display: grid; grid-template-columns: 240px 1fr 240px; height: 100vh; overflow: hidden; }
+/* grid-template-rows: minmax(0,1fr) forces the single row to exactly the viewport
+   height and lets its children shrink, so the chat list scrolls internally and
+   the composer stays pinned — instead of the row growing with history and pushing
+   the message box off the bottom of the page. */
+.app { display: grid; grid-template-columns: 240px minmax(0, 1fr) 240px; grid-template-rows: minmax(0, 1fr); height: 100vh; overflow: hidden; }
 .sidebar { background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
 .agents { background: var(--bg2); border-left: 1px solid var(--border); overflow-y: auto; min-height: 0; }
 /* min-height:0 lets the flex children actually shrink so #messages can scroll
@@ -91,8 +95,8 @@ html, body { height: 100%; overflow: hidden; }
   flex: 1; padding: 11px 14px; border-radius: 8px; border: 0;
   background: var(--bg3); color: var(--text);
   font-family: inherit; font-size: inherit; line-height: 1.4;
-  height: 44px;            /* fixed size — does NOT grow as you type */
-  resize: vertical;        /* but you can drag it taller if you want */
+  height: 80px;            /* fixed, roomy size — does NOT grow as you type */
+  resize: vertical;        /* but you can drag it taller/shorter if you want */
   overflow-y: auto;        /* long / multi-line text just scrolls inside */
 }
 .composer button { padding: 0 18px; height: 42px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; flex: none; }
