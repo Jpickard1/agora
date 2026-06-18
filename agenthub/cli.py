@@ -5,7 +5,7 @@ running. Designed to be trivially droppable into any agent or shell script.
 
 Examples
 --------
-    hubcli init --root /ewsc/jpickard/.agent-hub      # one-time setup
+    hubcli init --root ~/.agent-hub                   # one-time setup (any path)
     hubcli register --name trainer --caps gpu,train
     hubcli post -c general "training started on gpu01"
     hubcli read -c general --tail 20
