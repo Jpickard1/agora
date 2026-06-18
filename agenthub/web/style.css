@@ -400,3 +400,9 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .reply-bar .rb-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply-bar button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; }
 .reply-bar button:hover { color: var(--text); }
+
+/* ---- settings / display name (issue #67) ---- */
+.settings-btn{margin-left:auto;background:none;border:0;color:var(--muted);cursor:pointer;
+  font-size:12px;padding:2px 6px;border-radius:6px;display:flex;align-items:center;gap:4px}
+.settings-btn:hover{color:var(--text);background:var(--bg3)}
+.settings-btn #me-name{font-weight:600}

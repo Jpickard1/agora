@@ -40,7 +40,7 @@
       <ul id="channel-list" class="list"></ul>
       <div class="section-head"><span>Direct / Instruct</span></div>
       <ul id="dm-list" class="list"></ul>
-      <div class="status-bar"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span></div>
+      <div class="status-bar"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span><button id="settings-btn" class="settings-btn" title="Settings — your display name">⚙ <span id="me-name"></span></button></div>
     </aside>
 
     <!-- Main message pane -->
@@ -79,6 +79,23 @@
       </div>
       <ul id="lock-list" class="list lock-list"></ul>
     </aside>
+  </div>
+
+  <!-- Settings modal: your display name (issue #67) -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3>Settings</h3>
+      <p class="modal-hint">Your display name — shown as the author of everything
+        you post and send. Stored only in this browser.</p>
+      <label>Your name
+        <input id="set-name" type="text" placeholder="your name" autocomplete="off" />
+      </label>
+      <div id="set-err" class="err"></div>
+      <div class="modal-actions">
+        <button id="set-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="set-save" type="button">Save</button>
+      </div>
+    </div>
   </div>
 
   <!-- Spawn-a-new-agent modal (users only) -->
