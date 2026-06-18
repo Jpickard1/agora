@@ -518,6 +518,32 @@ def cmd_mkchannel(args):
     print(f"Channel ready: #{name}  → {where}")
 
 
+def cmd_migrate_channels(args):
+    """One safe, idempotent command for the #14 migration (issue #92): move the
+    public channels into the shared store + chmod (shared 2770 / private 0700).
+    --dry-run previews exactly what it would do, changing nothing."""
+    store = _store(args)
+    public = [c.strip() for c in args.public.split(",") if c.strip()] if args.public else None
+    try:
+        plan = store.migrate_channels(public=public, dry_run=args.dry_run)
+    except ValueError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        sys.exit(2)
+    if not plan:
+        print("✓ Channels already correctly placed — nothing to migrate.")
+        return
+    print("DRY RUN — would apply (nothing changed):" if args.dry_run else "Migrated:")
+    for a in plan:
+        bits = []
+        if a["move"]:
+            bits.append(f"move {a['from_store']}→{a['to_store']} store")
+        if a["chmod"]:
+            bits.append("chmod " + ("0700" if a["to"] == "private" else "2770"))
+        print(f"  #{a['channel']:18} → {a['to']:7}  ({', '.join(bits) or 'meta only'})")
+    if args.dry_run:
+        print("\nRe-run without --dry-run to apply.")
+
+
 # The labels the Agent Task issue form expects to exist in the target repo.
 # (name, color, description) — kept here so `labels-init` is the single source.
 AGENT_TASK_LABELS = [
@@ -1370,6 +1396,14 @@ def build_parser() -> argparse.ArgumentParser:
     vis.add_argument("--private", action="store_true",
                      help="Owner-only (chmod 0700; other ewsc_users denied) — the default")
     sp.set_defaults(func=cmd_mkchannel)
+
+    sp = sub.add_parser("migrate-channels",
+                        help="Move public channels into the shared store + set perms (#14 migration; idempotent)")
+    sp.add_argument("--dry-run", dest="dry_run", action="store_true",
+                    help="Preview exactly what would change; make NO changes")
+    sp.add_argument("--public", help="Comma-separated public channels "
+                    "(default: general,compute-resources,memes)")
+    sp.set_defaults(func=cmd_migrate_channels)
 
     sp = sub.add_parser("labels-init",
                         help="Create the Agent Task form's labels in a GitHub repo (idempotent)")

@@ -322,6 +322,90 @@ class HubStore:
             raise ValueError("visibility must be 'public' or 'private'")
         return self.ensure_channel(channel, visibility=visibility)
 
+    # -- migration to the dual-root layout (issue #92) ---------------------
+    # The 3 default-public channels; everything else becomes private. Override
+    # with an explicit list when calling.
+    DEFAULT_PUBLIC_CHANNELS = ("general", "compute-resources", "memes")
+
+    def _expected_mode(self, visibility: str) -> int:
+        return 0o700 if visibility == "private" else 0o2770
+
+    def relocate_channel(self, channel: str, visibility: str) -> bool:
+        """Ensure a channel sits in the correct ROOT for `visibility` with the
+        correct perms — moving + chmod'ing as needed, regardless of what its meta
+        currently says (legacy channels default meta 'public' but may physically
+        live in the private root). Idempotent. Returns True if anything changed."""
+        import shutil as _shutil
+        name = _safe_name(channel)
+        base = self._channel_base(name)
+        if base is None:
+            return False
+        target_root = self._root_for_visibility(visibility)
+        changed = False
+        if base.parent != target_root:
+            dest = target_root / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _shutil.move(str(base), str(dest))
+            base = dest
+            changed = True
+        meta = _read_json(base / "meta.json") or {"name": name}
+        if meta.get("visibility") != visibility:
+            meta["visibility"] = visibility
+            changed = True
+        _atomic_write_json(base / "meta.json", meta)
+        try:
+            import stat as _stat
+            if _stat.S_IMODE(os.stat(base).st_mode) != self._expected_mode(visibility):
+                changed = True
+        except OSError:
+            pass
+        self._apply_channel_perms(base, visibility)
+        return changed
+
+    def migration_plan(self, public: list[str] | None = None) -> list[dict[str, Any]]:
+        """What `migrate_channels` WOULD do (no changes): one entry per channel
+        that isn't already correctly placed/permed for its target visibility."""
+        import stat as _stat
+        public_set = set(public or self.DEFAULT_PUBLIC_CHANNELS)
+        sh = self.shared_channels_dir()
+        plan = []
+        for c in self.list_channels():
+            name = c["name"]
+            base = self._channel_base(name)
+            if base is None:
+                continue
+            target = "public" if name in public_set else "private"
+            target_root = self._root_for_visibility(target)
+            cur_root = base.parent
+            will_move = cur_root != target_root
+            try:
+                will_chmod = _stat.S_IMODE(os.stat(base).st_mode) != self._expected_mode(target)
+            except OSError:
+                will_chmod = True
+            if will_move or will_chmod or c.get("visibility") != target:
+                plan.append({
+                    "channel": name, "to": target,
+                    "from_store": "shared" if (sh is not None and cur_root == sh) else "private",
+                    "to_store": "shared" if target_root == sh else "private",
+                    "move": will_move, "chmod": will_chmod,
+                })
+        return plan
+
+    def migrate_channels(self, public: list[str] | None = None,
+                         dry_run: bool = False) -> list[dict[str, Any]]:
+        """Enforce the #14 split: the `public` channels go to the shared store
+        (2770); all others become private (0700). Idempotent (a second run is a
+        no-op). With dry_run, NOTHING changes — returns the same plan either way.
+        Requires a configured shared_root."""
+        if self.shared_root() is None:
+            raise ValueError("no shared_root configured — run "
+                             "'hubcli init --shared-root <path>' first")
+        plan = self.migration_plan(public)
+        if not dry_run:
+            for a in plan:
+                self.relocate_channel(a["channel"], a["to"])
+        return plan
+
     def _channel_messages_dir(self, name: str) -> Path:
         """Messages dir of a channel (resolved across roots; falls back to the
         private root for a just-created channel)."""
