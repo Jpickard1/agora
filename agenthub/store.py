@@ -169,6 +169,8 @@ class HubStore:
         self.kb_dir = self.root / "kb"
         self.projects_dir = self.root / "projects"
         self.locks_dir = self.root / "locks"
+        self.reactions_dir = self.root / "reactions"             # issue #61
+        self.reaction_events_dir = self.root / "reaction_events"  # for SSE tailing
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -177,7 +179,8 @@ class HubStore:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
                   self.broadcast_dir, self.uploads_dir, self.tasks_dir,
-                  self.kb_dir, self.projects_dir, self.locks_dir):
+                  self.kb_dir, self.projects_dir, self.locks_dir,
+                  self.reactions_dir, self.reaction_events_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -680,6 +683,103 @@ class HubStore:
 
     def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         return _read_json(self.agents_dir / f"{_safe_name(agent_id)}.json")
+
+    # -- reactions (issue #61) --------------------------------------------
+    # Emoji reactions on a message. Each (message, emoji, author) is ONE file —
+    # reactions/<msg_id>/<author>__<emoji-codepoints>.json — so add is an atomic,
+    # idempotent create and remove is an unlink: lock-free + concurrent-safe (the
+    # maildir pattern), and one author can't double-count an emoji. Messages stay
+    # immutable. Every change also appends a tiny event for SSE tailing.
+
+    @staticmethod
+    def _emoji_key(emoji: str) -> str:
+        # Deterministic, filesystem-safe encoding of an emoji (which may be
+        # multi-codepoint, e.g. 👍🏽) — used in the reaction filename.
+        return "-".join(f"{ord(c):x}" for c in (emoji or "")) or "none"
+
+    def _reaction_file(self, msg_id: str, emoji: str, author: str) -> Path:
+        return (self.reactions_dir / _safe_name(msg_id)
+                / f"{_safe_name(author)}__{self._emoji_key(emoji)}.json")
+
+    def _emit_reaction_event(self, msg_id: str, emoji: str, author: str, op: str):
+        ts = _now()
+        _atomic_write_json(self.reaction_events_dir / _msg_filename(ts), {
+            "msg_id": _safe_name(msg_id), "emoji": emoji, "author": author,
+            "op": op, "ts": ts,
+        })
+
+    def add_reaction(self, msg_id: str, emoji: str, author: str,
+                     author_name: str = "") -> dict[str, Any]:
+        """Add (or re-affirm) `author`'s `emoji` reaction to a message.
+        Idempotent. Returns the message's aggregated reactions."""
+        emoji = (emoji or "").strip()
+        if not emoji or len(emoji) > 16:
+            raise ValueError("a non-empty emoji (<=16 chars) is required")
+        path = self._reaction_file(msg_id, emoji, author)
+        if not path.exists():
+            _atomic_write_json(path, {
+                "msg_id": _safe_name(msg_id), "emoji": emoji,
+                "author": _safe_name(author),
+                "author_name": author_name or author, "ts": _now(),
+            })
+            self._emit_reaction_event(msg_id, emoji, author, "add")
+        return self.get_reactions(msg_id)
+
+    def remove_reaction(self, msg_id: str, emoji: str, author: str
+                        ) -> dict[str, Any]:
+        """Remove `author`'s `emoji` reaction (no-op if absent). Returns the
+        message's aggregated reactions."""
+        path = self._reaction_file(msg_id, emoji, author)
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            self._emit_reaction_event(msg_id, emoji, author, "remove")
+        return self.get_reactions(msg_id)
+
+    def toggle_reaction(self, msg_id: str, emoji: str, author: str,
+                        author_name: str = "") -> dict[str, Any]:
+        """Toggle `author`'s `emoji` reaction: remove if present, else add."""
+        if self._reaction_file(msg_id, emoji, author).exists():
+            return self.remove_reaction(msg_id, emoji, author)
+        return self.add_reaction(msg_id, emoji, author, author_name=author_name)
+
+    def get_reactions(self, msg_id: str) -> dict[str, Any]:
+        """Aggregated reactions for a message:
+        {"<emoji>": {"count": n, "authors": [name, …]}, …} (emoji insertion order
+        by first reactor)."""
+        mdir = self.reactions_dir / _safe_name(msg_id)
+        agg: dict[str, dict[str, Any]] = {}
+        if mdir.exists():
+            files = sorted(mdir.glob("*.json"), key=lambda p: _read_json(p).get("ts", 0)
+                           if _read_json(p) else 0)
+            for f in files:
+                rec = _read_json(f)
+                if not rec:
+                    continue
+                e = rec.get("emoji")
+                if not e:
+                    continue
+                bucket = agg.setdefault(e, {"count": 0, "authors": []})
+                bucket["count"] += 1
+                bucket["authors"].append(rec.get("author_name") or rec.get("author"))
+        return agg
+
+    def reactions_for(self, msg_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Aggregated reactions for several messages at once (skips messages with
+        none), keyed by message id — for decorating a list of messages."""
+        out: dict[str, dict[str, Any]] = {}
+        for mid in msg_ids:
+            r = self.get_reactions(mid)
+            if r:
+                out[_safe_name(mid)] = r
+        return out
+
+    def read_reaction_events(self, since_ts: float = 0.0,
+                             limit: int | None = None) -> list[dict[str, Any]]:
+        """Reaction add/remove events since `since_ts` (for the SSE stream)."""
+        return self._read_dir_messages(self.reaction_events_dir, since_ts, limit)
 
     def forget_agent(self, agent_id: str) -> bool:
         """Remove an agent's record entirely (drops it from the roster). Returns
