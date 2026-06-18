@@ -592,6 +592,23 @@ def cmd_locks(args):
         print(f"🔒 {lk['resource']}  @{lk['owner']}  ({int(lk.get('age', 0))}s){flag}{note}")
 
 
+def cmd_mentions(args):
+    from .store import collect_mentions
+    store = _store(args)
+    name = args.name or args.author or "cli"
+    hits = collect_mentions(store, name, limit=args.limit or 50)
+    if args.json:
+        print(json.dumps(hits, indent=2))
+        return
+    if not hits:
+        print(f"(no messages mention @{name})")
+        return
+    print(f"Messages mentioning @{name}:")
+    for m in hits:
+        where = f"#{m['channel']}" if m.get("channel") != "*" else "→all"
+        print(f"[{_fmt_ts(m['ts'])}] {where:12} {m.get('author_name', m.get('author'))}: {m['text']}")
+
+
 def cmd_project_new(args):
     store = _store(args)
     p = store.project_new(args.id, name=args.name or args.id, goal=args.goal or "",
@@ -1276,6 +1293,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("locks", help="List active advisory locks")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_locks)
+
+    # @mentions: messages that mention you (issue #52)
+    sp = sub.add_parser("mentions", help="List messages that @mention an agent")
+    sp.add_argument("--name", help="Whose mentions to list (default: --author)")
+    sp.add_argument("--author", help="Alias for --name")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_mentions)
 
     # projects: group tasks/channels under a goal with milestones + rollup (#22)
     sp = sub.add_parser("project", help="Projects: group tasks/channels under a goal")
