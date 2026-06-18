@@ -11,6 +11,13 @@ inside your agent's tmux pane; it:
   3. types each incoming message into this tmux pane via `tmux send-keys`, so
      your interactive Claude Code agent sees it as if you had typed it.
 
+Reliable delivery (A1): a turn-based agent only reads stdin between turns, so
+injecting WHILE it is mid-turn corrupts the prompt or loses the message. The
+bridge therefore *queues* incoming messages and only injects when the pane is
+idle (no "esc to interrupt"/spinner and the screen has settled). A per-message
+``--max-wait`` is a safety valve so a wrongly-detected-busy pane never starves
+delivery forever. Pass ``--no-idle-wait`` to restore the old blind behaviour.
+
 Your agent then replies with ordinary commands, e.g.:
     hubcli post -c general "on it"            # to the channel
     hubcli send <agent-id> "done"            # direct to another agent
@@ -32,6 +39,21 @@ from .config import resolve_root
 from .store import HubStore
 
 
+# Markers that mean the agent (Claude Code or similar) is actively working and
+# is NOT ready to receive a new prompt. "esc to interrupt" is the dependable
+# Claude Code signal; the braille glyphs catch generic spinners.
+BUSY_TEXT = (
+    "esc to interrupt",
+    "interrupt to stop",
+    "ctrl+b to run in background",
+)
+BRAILLE = set(
+    "⠁⠂⠃⠄⠅⠆⠇⠈⠉⠊⠋⠌⠍⠎⠏⠐⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟"
+    "⠠⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿"
+    "⣾⣽⣻⢿⡿⣟⣯⣷"
+)
+
+
 def detect_pane(explicit: str | None) -> str | None:
     if explicit:
         return explicit
@@ -44,6 +66,42 @@ def detect_pane(explicit: str | None) -> str | None:
         ).strip() or None
     except Exception:
         return None
+
+
+def capture_pane(pane: str) -> str:
+    """Return the current visible contents of the pane (best-effort)."""
+    try:
+        return subprocess.check_output(
+            ["tmux", "capture-pane", "-p", "-t", pane],
+            text=True, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return ""
+
+
+def pane_busy(text: str) -> bool:
+    """True if the pane shows the agent is mid-turn (not ready for input)."""
+    low = text.lower()
+    if any(m in low for m in BUSY_TEXT):
+        return True
+    # A live spinner glyph on screen means it's still rendering/working.
+    return any(ch in BRAILLE for ch in text)
+
+
+def is_self_message(m: dict, aid: str, name: str) -> bool:
+    """A3 loop-prevention: don't re-inject our own posts or delivery receipts.
+    Keyed on the stable agent id first, display name second."""
+    if m.get("author") == aid or m.get("author_name") == name:
+        return True
+    return (m.get("meta") or {}).get("msg_kind") in ("delivery_receipt",)
+
+
+def ready_to_flush(idle_streak: int, settle_checks: int,
+                   head_age: float, max_wait: float) -> bool:
+    """Decide whether a queued message may be injected now: either the pane has
+    been idle for `settle_checks` consecutive observations, or the message has
+    waited longer than `max_wait` (safety valve against mis-detected busy)."""
+    return idle_streak >= settle_checks or head_age >= max_wait
 
 
 def inject(pane: str, text: str) -> None:
@@ -65,6 +123,12 @@ def main(argv=None):
     ap.add_argument("--interval", type=float, default=2.0)
     ap.add_argument("--history", action="store_true",
                     help="Also deliver messages from before the bridge started")
+    ap.add_argument("--no-idle-wait", action="store_true",
+                    help="Inject immediately instead of waiting for an idle pane (old behaviour)")
+    ap.add_argument("--settle-checks", type=int, default=2,
+                    help="Consecutive idle observations required before injecting")
+    ap.add_argument("--max-wait", type=float, default=120.0,
+                    help="Force-deliver a queued message after this many seconds even if the pane looks busy")
     args = ap.parse_args(argv)
 
     pane = detect_pane(args.pane)
@@ -82,41 +146,83 @@ def main(argv=None):
     store.register_agent(aid, args.name, host=host, pid=os.getpid(),
                          capabilities=["claude-code"])
     store.heartbeat(aid, activity=f"listening on #{args.channel}")
+    idle_mode = pane is not None and not args.no_idle_wait
     print(f"[bridge] '{args.name}' connected (id={aid}, host={host}, pane={pane}). "
-          f"Listening on #{args.channel} + direct inbox + broadcasts.")
+          f"Listening on #{args.channel} + direct inbox + broadcasts. "
+          f"idle-wait={'on' if idle_mode else 'off'}.")
 
     start = 0.0 if args.history else time.time()
     chan_cursor = start
     inbox_cursor = start
     bcast_cursor = start
 
+    # A1: messages wait here until the pane is idle. Each entry is
+    # (enqueued_ts, where, message).
+    pending: list[tuple[float, str, dict]] = []
+    last_snapshot = ""
+    idle_streak = 0
+
     def is_mine(m) -> bool:
-        return m.get("author") == aid or m.get("author_name") == args.name
+        return is_self_message(m, aid, args.name)
+
+    def deliver(where: str, m: dict) -> None:
+        line = f"[HUB {where} from {m['author_name']}]: {m['text']}"
+        if pane:
+            inject(pane, line)
+        else:
+            print(line)
 
     try:
         while True:
             store.heartbeat(aid, activity=f"listening on #{args.channel}")
-            incoming = []
+
+            # 1. Collect new messages from all sources into the queue (in order).
+            fresh: list[tuple[str, dict]] = []
             for m in store.read_channel(args.channel, since_ts=chan_cursor):
                 chan_cursor = max(chan_cursor, m["ts"])
                 if not is_mine(m):
-                    incoming.append((f"#{args.channel}", m))
+                    fresh.append((f"#{args.channel}", m))
             for m in store.read_inbox(aid, since_ts=inbox_cursor):
                 inbox_cursor = max(inbox_cursor, m["ts"])
                 if not is_mine(m):
-                    incoming.append(("direct-to-you", m))
+                    fresh.append(("direct-to-you", m))
             for m in store.read_broadcast(since_ts=bcast_cursor):
                 bcast_cursor = max(bcast_cursor, m["ts"])
                 if not is_mine(m):
-                    incoming.append(("broadcast-to-all", m))
+                    fresh.append(("broadcast-to-all", m))
+            fresh.sort(key=lambda x: x[1]["ts"])
+            now = time.time()
+            pending.extend((now, where, m) for where, m in fresh)
 
-            incoming.sort(key=lambda x: x[1]["ts"])
-            for where, m in incoming:
-                line = f"[HUB {where} from {m['author_name']}]: {m['text']}"
-                if pane:
-                    inject(pane, line)
+            # 2. Try to flush the queue when the pane is ready.
+            if pending:
+                if not idle_mode:
+                    # Old behaviour: inject everything immediately.
+                    for _, where, m in pending:
+                        deliver(where, m)
+                    pending.clear()
+                    idle_streak = 0
                 else:
-                    print(line)
+                    snap = capture_pane(pane)
+                    busy = pane_busy(snap)
+                    settled = (snap == last_snapshot)
+                    last_snapshot = snap
+                    idle_streak = idle_streak + 1 if (not busy and settled) else 0
+
+                    head_age = time.time() - pending[0][0]
+                    ready = idle_streak >= args.settle_checks
+                    if ready_to_flush(idle_streak, args.settle_checks,
+                                      head_age, args.max_wait):
+                        _, where, m = pending.pop(0)
+                        if not ready:
+                            print(f"[bridge] max-wait hit ({head_age:.0f}s); "
+                                  f"force-delivering despite busy pane.", flush=True)
+                        deliver(where, m)
+                        # Injecting makes the agent busy again; re-settle before
+                        # the next queued message so we serialise cleanly.
+                        idle_streak = 0
+                        last_snapshot = ""
+
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass
