@@ -118,6 +118,26 @@ def compute_status(has_pane: bool, busy: bool, pending: int) -> str:
     return "listening"
 
 
+def classify_liveness(has_pane: bool, busy: bool, unchanged_for: float, *,
+                      wedged_after: float = 20.0, idle_after: float = 45.0) -> str:
+    """Liveness sub-status (issue #53): is the agent actually keeping up, beyond
+    just heartbeating online? `unchanged_for` = seconds since the pane's output
+    last changed.
+      - no pane: can't judge -> 'responsive' (the bridge is alive)
+      - busy + output frozen for >= wedged_after -> 'wedged' (stuck mid-turn —
+        input injected but nothing is being produced; the case that had the
+        manager pinging an "online" agent that wasn't consuming input)
+      - busy + output moving -> 'busy' (actively producing)
+      - idle pane, changed recently (< idle_after) -> 'responsive' (just finished)
+      - idle pane, quiet a while -> 'idle' (free for work)
+    """
+    if not has_pane:
+        return "responsive"
+    if busy:
+        return "wedged" if unchanged_for >= wedged_after else "busy"
+    return "responsive" if unchanged_for < idle_after else "idle"
+
+
 def pane_busy(text: str) -> bool:
     """True if the pane shows the agent is mid-turn (not ready for input)."""
     low = text.lower()
@@ -247,6 +267,10 @@ def main(argv=None):
                     help="Consecutive idle observations required before injecting")
     ap.add_argument("--max-wait", type=float, default=120.0,
                     help="Force-deliver a queued message after this many seconds even if the pane looks busy")
+    ap.add_argument("--wedged-after", type=float, default=20.0,
+                    help="Liveness: pane busy with no output change for this many seconds => 'wedged'")
+    ap.add_argument("--idle-after", type=float, default=45.0,
+                    help="Liveness: idle pane quiet for this many seconds => 'idle' (else 'responsive')")
     ap.add_argument("--firehose", "--no-mention-filter", dest="firehose",
                     action="store_true",
                     help="See the full channel stream: inject every #channel message even if it @mentions only other agents")
@@ -315,6 +339,10 @@ def main(argv=None):
     pending: list[tuple[float, str, dict]] = []
     last_snapshot = ""
     idle_streak = 0
+    # Liveness tracking (issue #53): when the pane output last changed, so we can
+    # tell a 'wedged' agent (busy but frozen) from a 'busy' one (still producing).
+    last_live_snap = ""
+    last_change_ts = time.time()
 
     def is_mine(m) -> bool:
         return is_self_message(m, aid, args.name)
@@ -343,6 +371,13 @@ def main(argv=None):
                 settled = (snap == last_snapshot)
                 last_snapshot = snap
                 idle_streak = idle_streak + 1 if (not busy and settled) else 0
+            # Liveness (#53): track when the pane output last changed.
+            if snap != last_live_snap:
+                last_live_snap = snap
+                last_change_ts = time.time()
+            liveness = classify_liveness(
+                pane is not None, busy, time.time() - last_change_ts,
+                wedged_after=args.wedged_after, idle_after=args.idle_after)
 
             # 1. Collect new messages from all sources into the queue (in order).
             # In --all-channels mode, re-resolve the live channel set each loop so
@@ -380,9 +415,10 @@ def main(argv=None):
             now = time.time()
             pending.extend((now, where, m) for where, m in fresh)
 
-            # A5: report a live status for the roster (preserve free-text activity).
+            # A5 status + #53 liveness for the roster (preserve free-text activity).
             store.heartbeat(aid, status=compute_status(pane is not None, busy,
-                                                       len(pending)))
+                                                       len(pending)),
+                            liveness=liveness)
 
             # 2. Try to flush the queue when the pane is ready.
             if pending:

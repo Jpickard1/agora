@@ -224,11 +224,20 @@ function agentLi(a) {
   const caps = (a.capabilities || []).join(", ");
   const sess = a.tmux_session || (a.extra && a.extra.tmux_session) || "";
   const st = agentStatus(a);
+  // Liveness sub-status (#53): flag an online-but-stuck agent. 'wedged' means it
+  // heartbeats (looks "working") but its pane output has been frozen — the case
+  // worth acting on before reassigning. Others render as a subtle sub-badge.
+  const live = a.online ? (a.liveness || "") : "";
+  const liveBadge = live === "wedged"
+    ? `<span class="status-badge st-wedged" title="online but pane output is frozen — may be stuck">⚠ wedged</span>`
+    : (live && live !== "responsive"
+        ? `<span class="live-sub" title="liveness: ${live}">${live}</span>` : "");
   li.innerHTML = `
     <div class="row1">
       <span class="pdot ${a.online ? "online" : ""}"></span>
       <span class="aname">${esc(a.name)}</span>
       <span class="status-badge ${st.cls}">${st.label}</span>
+      ${liveBadge}
     </div>
     ${a.activity ? `<div class="ameta work">▸ ${esc(a.activity)}</div>` : ""}
     <div class="ameta">🖥 ${esc(a.host || "?")}${sess ? ` · ⧉ ${esc(sess)}` : ""}</div>
