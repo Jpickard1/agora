@@ -682,6 +682,66 @@ class HubStore:
                        "task_changes": len(task_changes)},
         }
 
+    def last_active_ts(self, viewer: str) -> float:
+        """Latest ts of a message authored by `viewer` (channels + broadcasts) —
+        i.e. when they were last active on the hub. 0.0 if never seen."""
+        v = (viewer or "").lower()
+        latest = 0.0
+        for ch in self.list_channels():
+            for m in self.read_channel(ch["name"]):
+                if v in ((m.get("author") or "").lower(), (m.get("author_name") or "").lower()):
+                    latest = max(latest, m.get("ts", 0) or 0)
+        for m in self.read_broadcast():
+            if v in ((m.get("author") or "").lower(), (m.get("author_name") or "").lower()):
+                latest = max(latest, m.get("ts", 0) or 0)
+        return latest
+
+    def catchup(self, viewer: str, since_ts: float | None = None,
+                default_window: float = 86400.0) -> dict[str, Any]:
+        """'What happened while you were away' for `viewer` (catch-up summary).
+        The window defaults to the viewer's last activity (or `default_window`
+        seconds ago if they've never posted). Personalized: new activity per
+        channel (from #79's digest) + the viewer's unanswered @mentions, unread
+        DMs, open tasks, and recent alerts. Reads the store only."""
+        now = _now()
+        if since_ts is None:
+            la = self.last_active_ts(viewer)
+            since_ts = la if la > 0 else now - default_window
+        v = (viewer or "").lower()
+        digest = self.activity_digest(since_ts)
+
+        mentions, alerts = [], []
+        for ch in self.list_channels():
+            for m in self.read_channel(ch["name"], since_ts=since_ts):
+                author = m.get("author_name") or m.get("author") or ""
+                if author.lower() == v:
+                    continue                       # skip the viewer's own posts
+                row = {"channel": ch["name"], "author": author,
+                       "text": m.get("text", ""), "ts": m.get("ts", 0) or 0}
+                if message_mentions(m.get("text", ""), viewer):
+                    mentions.append(row)
+                if (m.get("meta") or {}).get("alert"):
+                    alerts.append(row)
+        mentions.sort(key=lambda x: x["ts"])
+        alerts.sort(key=lambda x: x["ts"])
+
+        unread_dms = [m for m in self.read_inbox(viewer, since_ts=since_ts)
+                      if (m.get("author_name") or m.get("author") or "").lower() != v]
+        open_tasks = [t for t in self.list_tasks()
+                      if (t.get("claimed_by") or "").lower() == v
+                      and t.get("status") in ("claimed", "running")]
+        return {
+            "viewer": viewer, "since": since_ts, "now": now,
+            "channels": digest["channels"], "broadcasts": digest["broadcasts"],
+            "mentions": mentions, "alerts": alerts,
+            "unread_dms": unread_dms, "open_tasks": open_tasks,
+            "task_changes": digest["task_changes"],   # claimed/done/stalled deltas (#113)
+            "totals": {"new_messages": digest["totals"]["messages"],
+                       "mentions": len(mentions), "unread_dms": len(unread_dms),
+                       "open_tasks": len(open_tasks), "alerts": len(alerts),
+                       "task_changes": len(digest["task_changes"])},
+        }
+
     def comm_graph(self, since_ts: float = 0.0) -> dict[str, Any]:
         """Directed communication graph derived from directed messages: for each
         inbox, edges are author -> recipient with a message count. Shows which
