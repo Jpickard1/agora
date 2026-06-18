@@ -142,6 +142,84 @@ def test_ensure_bridge_restarts_when_offline():
     assert calls == [("agora-manager-bridge", "bcmd")]
 
 
+# -- wedged-agent detection (#111), pure logic -----------------------------
+
+def _agent(aid, *, online=True, liveness="responsive", queued=0,
+           last_delivered_ts=0.0, kind="agent"):
+    return {"id": aid, "name": aid, "online": online, "liveness": liveness,
+            "kind": kind, "delivery": {"queued": queued,
+                                       "last_delivered_ts": last_delivered_ts}}
+
+
+def test_offline_agent_is_never_wedged():
+    a = _agent("x", online=False, liveness="wedged", queued=5)
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is False
+
+
+def test_busy_agent_is_never_wedged():
+    # legitimately working (long turn) — must NOT be flagged
+    a = _agent("x", liveness="busy", queued=3, last_delivered_ts=0.0)
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is False
+
+
+def test_bridge_flagged_wedged_is_wedged():
+    a = _agent("x", liveness="wedged")
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is True
+
+
+def test_stale_backlog_is_wedged():
+    # online, idle, has a queue that hasn't drained in a while
+    a = _agent("x", liveness="idle", queued=2, last_delivered_ts=100.0)
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is True
+
+
+def test_fresh_backlog_is_not_wedged():
+    # queued, but a message was delivered recently → still draining → healthy
+    a = _agent("x", liveness="idle", queued=2, last_delivered_ts=980.0)
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is False
+
+
+def test_no_queue_is_not_wedged():
+    a = _agent("x", liveness="idle", queued=0)
+    assert S.is_wedged(a, now=1000.0, stale_after=60.0) is False
+
+
+def test_detect_wedged_only_after_threshold():
+    a = _agent("x", liveness="wedged")
+    # first sighting: starts the clock, not yet flagged
+    to_handle, recovered, since = S.detect_wedged(
+        [a], now=100.0, threshold=60.0, handled=set(), wedged_since={}, stale_after=60.0)
+    assert to_handle == [] and since == {"x": 100.0}
+    # still wedged 70s later: now flagged
+    to_handle, recovered, since = S.detect_wedged(
+        [a], now=170.0, threshold=60.0, handled=set(), wedged_since=since, stale_after=60.0)
+    assert [x["id"] for x in to_handle] == ["x"]
+
+
+def test_detect_wedged_dedups():
+    a = _agent("x", liveness="wedged")
+    to_handle, _, since = S.detect_wedged(
+        [a], now=200.0, threshold=60.0, handled={"x"}, wedged_since={"x": 100.0},
+        stale_after=60.0)
+    assert to_handle == []          # already handled -> no repeat alert
+
+
+def test_detect_wedged_recovers_and_rearms():
+    healthy = _agent("x", liveness="responsive")
+    to_handle, recovered, since = S.detect_wedged(
+        [healthy], now=300.0, threshold=60.0, handled={"x"},
+        wedged_since={"x": 100.0}, stale_after=60.0)
+    assert to_handle == [] and "x" in recovered and "x" not in since
+
+
+def test_detect_wedged_vanished_agent_recovers():
+    # agent we were tracking dropped off the roster entirely
+    to_handle, recovered, since = S.detect_wedged(
+        [], now=300.0, threshold=60.0, handled={"x"}, wedged_since={"x": 100.0},
+        stale_after=60.0)
+    assert "x" in recovered and "x" not in since
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0
