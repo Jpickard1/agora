@@ -89,6 +89,27 @@ def test_firehose_overrides_mention_filter():
                                      firehose=True) is True
 
 
+# --- A2: delivery receipts ------------------------------------------------
+
+def test_build_receipt_addresses_sender_and_correlates():
+    m = {"id": "abc123", "author": "manager", "author_name": "manager",
+         "text": "do X"}
+    to, text, meta = bridge.build_receipt(m, "worker1", "direct-to-you")
+    assert to == "manager"                       # receipt goes back to sender
+    assert meta["msg_kind"] == "delivery_receipt"
+    assert meta["in_reply_to"] == "abc123"       # correlates to the original
+    assert meta["delivered_to"] == "worker1"
+    assert "worker1" in text
+
+
+def test_build_receipt_is_filtered_as_self_message():
+    # A receipt must never be re-injected by the recipient's own bridge.
+    _, _, meta = bridge.build_receipt({"id": "1", "author": "manager"},
+                                      "worker1", "direct-to-you")
+    receipt_msg = {"author": "worker1", "author_name": "worker1", "meta": meta}
+    assert bridge.is_self_message(receipt_msg, "manager", "manager") is True
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0

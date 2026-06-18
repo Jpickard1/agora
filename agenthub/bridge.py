@@ -118,6 +118,21 @@ def ready_to_flush(idle_streak: int, settle_checks: int,
     return idle_streak >= settle_checks or head_age >= max_wait
 
 
+def build_receipt(m: dict, aid: str, where: str) -> tuple[str, str, dict]:
+    """A2: build a delivery receipt for a message we just injected. Returns
+    (recipient_inbox, text, meta). The receipt is addressed back to the original
+    sender so a manager/supervisor can tell 'delivered' from 'agent stuck'."""
+    to = m.get("author") or "unknown"
+    meta = {
+        "msg_kind": "delivery_receipt",
+        "in_reply_to": m.get("id"),
+        "delivered_to": aid,
+        "where": where,
+        "delivered_ts": time.time(),
+    }
+    return to, f"✓ delivered to {aid} ({where})", meta
+
+
 def extract_mentions(text: str) -> set[str]:
     """Lower-cased @mentions in a message ('@Worker1, hi' -> {'worker1'})."""
     return {m.lower() for m in _MENTION_RE.findall(text or "")}
@@ -167,6 +182,8 @@ def main(argv=None):
     ap.add_argument("--firehose", "--no-mention-filter", dest="firehose",
                     action="store_true",
                     help="See the full channel stream: inject every #channel message even if it @mentions only other agents")
+    ap.add_argument("--no-receipts", dest="receipts", action="store_false",
+                    help="Don't write a delivery receipt when a message is injected")
     args = ap.parse_args(argv)
 
     pane = detect_pane(args.pane)
@@ -209,6 +226,16 @@ def main(argv=None):
             inject(pane, line)
         else:
             print(line)
+        # A2: confirm delivery back to the sender (only for real injections, and
+        # never for our own messages — those are filtered out before delivery).
+        if pane and args.receipts:
+            to, text, meta = build_receipt(m, aid, where)
+            if to and to != aid:
+                try:
+                    store.post_inbox(to, text, author=aid, author_name=args.name,
+                                     author_kind="system", host=host, meta=meta)
+                except Exception as e:
+                    print(f"[bridge] receipt write failed: {e}", flush=True)
 
     try:
         while True:
