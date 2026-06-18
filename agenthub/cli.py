@@ -913,6 +913,17 @@ def cmd_task_reassign(args):
     print(f"✓ Reassigned {args.id} → @{t.get('claimed_by')}")
 
 
+def cmd_update(args):
+    """Pull + apply the latest Agora into this install (issue #69)."""
+    from .selfupdate import do_update
+    r = do_update(restart=not args.no_restart, check_only=args.check)
+    if args.json:
+        print(json.dumps(r, indent=2))
+    else:
+        print(("✓ " if r.get("ok") else "✗ ") + r.get("message", ""))
+    sys.exit(0 if r.get("ok") else 1)
+
+
 def cmd_doctor(args):
     root = resolve_root(args.root)
     store = HubStore(root)
@@ -1518,6 +1529,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("doctor", help="Health check: hub status, counts, presence")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("update", help="Pull + apply the latest Agora into this install (#69)")
+    sp.add_argument("--check", action="store_true", help="Only report if an update is available (no changes)")
+    sp.add_argument("--no-restart", action="store_true", help="Pull + pip refresh but don't restart the server")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_update)
 
     sp = sub.add_parser("install-service", help="Generate a systemd unit for the server")
     sp.add_argument("--host", default="0.0.0.0")
