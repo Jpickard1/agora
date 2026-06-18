@@ -11,10 +11,11 @@ PORT="${AGORA_PORT:-8910}"
 
 if [ ! -f "$ROOT/config.json" ]; then
   echo "[entrypoint] initialising hub at $ROOT"
-  hubcli init --root "$ROOT" --no-pointer ${AGENT_HUB_TOKEN:+--token "$AGENT_HUB_TOKEN"}
+  # NOTE: --root is a TOP-LEVEL flag — it must come BEFORE the subcommand.
+  hubcli --root "$ROOT" init --no-pointer ${AGENT_HUB_TOKEN:+--token "$AGENT_HUB_TOKEN"}
 else
   echo "[entrypoint] existing hub at $ROOT — leaving config as-is"
 fi
 
 echo "[entrypoint] serving on 0.0.0.0:$PORT  (UI: http://localhost:$PORT/)"
-exec hubcli serve --host 0.0.0.0 --port "$PORT" --root "$ROOT"
+exec hubcli --root "$ROOT" serve --host 0.0.0.0 --port "$PORT"

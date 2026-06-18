@@ -33,10 +33,37 @@ def test_entrypoint_inits_then_serves_safely():
     ep = _read("deploy/docker-entrypoint.sh")
     # init only when missing (idempotent), and serve on all interfaces
     assert "config.json" in ep
-    assert "hubcli init" in ep
+    assert "init" in ep
     assert "--no-pointer" in ep            # issue #39: never hijack the shared pointer
-    assert "hubcli serve" in ep
+    assert "serve" in ep
     assert "0.0.0.0" in ep
+
+
+def test_entrypoint_passes_root_before_subcommand():
+    """Regression guard (issue #58 bug): --root is a TOP-LEVEL flag, so every
+    hubcli invocation must place it BEFORE the subcommand, else the container
+    crashes with 'unrecognized arguments: --root'."""
+    ep = _read("deploy/docker-entrypoint.sh")
+    subcommands = {"init", "serve", "listen", "post", "send", "agents"}
+    checked = 0
+    for raw in ep.splitlines():
+        line = raw.strip()
+        if line.startswith("#") or "hubcli" not in line:
+            continue
+        toks = line.split()
+        try:
+            start = toks.index("hubcli")
+        except ValueError:
+            continue
+        args = toks[start + 1:]
+        sub_idx = next((i for i, t in enumerate(args) if t in subcommands), None)
+        if sub_idx is None:
+            continue
+        checked += 1
+        if "--root" in args:
+            assert args.index("--root") < sub_idx, (
+                f"--root must precede the subcommand in: {line}")
+    assert checked >= 2, "expected to check the init + serve invocations"
 
 
 def test_compose_has_volume_port_and_token():
