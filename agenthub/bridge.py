@@ -44,8 +44,31 @@ import sys
 import time
 
 from . import transport as transport_mod
+from . import participants as participants_mod
 from .config import resolve_root
 from .store import HubStore
+
+
+def _whoami():
+    """OS user that owns this agent (for the shared participants registry, #86)."""
+    import os as _os
+    try:
+        import getpass
+        return _os.environ.get("AGORA_USER") or getpass.getuser()
+    except Exception:
+        return _os.environ.get("AGORA_USER") or "user"
+
+
+def _register_participant(store, user, aid, host):
+    """Upsert this agent in the SHARED participants registry — only when a
+    shared_root is configured (#14); otherwise a no-op (single-root hub)."""
+    try:
+        sr = store.shared_root()
+        if sr:
+            participants_mod.register_participant(str(sr), user, aid,
+                                                  host=host, caps=["claude-code"])
+    except Exception as e:
+        print(f"[bridge] participant register skipped: {e}", flush=True)
 
 
 # A mention is @ followed by an agent name/id (letters, digits, _ . -).
@@ -346,6 +369,8 @@ def main(argv=None):
     store.register_agent(aid, args.name, host=host, pid=os.getpid(),
                          capabilities=["claude-code"],
                          extra={"tmux_session": session, "transport": transport.kind})
+    _bridge_user = _whoami()
+    _register_participant(store, _bridge_user, aid, host)   # shared roster (#86); no-op if no shared_root
     channels = resolve_channels(store, args.all_channels, args.channels,
                                 single_channel)
     store.heartbeat(aid, status="listening", activity=channels_activity(channels))
@@ -455,6 +480,7 @@ def main(argv=None):
 
             # A5 status + #53 liveness + #54 delivery health for the roster
             # (preserve free-text activity).
+            _register_participant(store, _bridge_user, aid, host)   # refresh shared roster (#86)
             store.heartbeat(aid, status=compute_status(pane is not None, busy,
                                                        len(pending)),
                             liveness=liveness,
