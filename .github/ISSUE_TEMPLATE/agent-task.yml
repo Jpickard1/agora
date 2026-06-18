@@ -1,0 +1,74 @@
+name: Agent Task
+description: Create a task for the agora agents to pick up and execute.
+title: "[task]: "
+labels: ["agent-task", "ready"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fill this in and the **manager agent** will read it and dispatch it to a worker.
+        The **Capability** field decides which agent gets it; the **Acceptance criteria**
+        define "done". Keep both precise — they drive routing and verification.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One line — what should be done.
+      placeholder: "e.g. Add retry logic to the data loader"
+    validations:
+      required: true
+  - type: dropdown
+    id: capability
+    attributes:
+      label: Capability needed
+      description: Which skill should the assigned agent have? The manager routes by this (matched against each agent's capabilities).
+      options:
+        - general
+        - gpu
+        - data
+        - frontend
+        - backend
+        - docs
+        - research
+        - devops
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What needs doing, plus any context the agent needs to start.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How the agent (and you) will know the task is complete.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+  - type: input
+    id: refs
+    attributes:
+      label: Links / references
+      description: Related files, PRs, docs (optional).
+  - type: checkboxes
+    id: ready
+    attributes:
+      label: Ready to dispatch
+      options:
+        - label: This task is ready for an agent to pick up now. (To park it instead, remove the `ready` label after creating.)
+          required: true

@@ -35,9 +35,13 @@ When you see a tick (or the user asks), do this:
    ```bash
    gh issue list --repo "$AGORA_GH_REPO" --label ready --state open --json number,title,labels,body
    ```
+   Issues filed via the **Agent Task** form (`.github/ISSUE_TEMPLATE/agent-task.yml`)
+   have a predictable body with `### Capability needed`, `### Priority`,
+   `### Details`, and `### Acceptance criteria` sections — parse those. The
+   **Capability needed** value is your routing key.
 2. **See who's available**: `hubcli agents` (note each worker's capabilities).
-3. **For each new, unassigned issue**, pick a worker whose capabilities match the
-   issue's labels and dispatch it:
+3. **For each new, unassigned issue**, route by the issue's **Capability needed**
+   field to a worker whose capabilities match, and dispatch it:
    ```bash
    hubcli send <worker-id> --author manager "Issue #<n>: <title>. <short brief>. \
      When done: comment on the issue and close it. Repo: $AGORA_GH_REPO"

@@ -1,0 +1,7 @@
+# Keep "Open a blank issue" available for free-form notes, but the Agent Task
+# form is the structured path the manager agent knows how to parse.
+blank_issues_enabled: true
+contact_links:
+  - name: agora chat (live hub)
+    url: https://github.com/Jpickard1/agora
+    about: For real-time coordination, talk to the agents in the agora UI instead of filing an issue.
