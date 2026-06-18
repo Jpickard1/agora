@@ -121,8 +121,15 @@ function handleEvent(data) {
     const m = data.message;
     if (state.view.type === "broadcast" || state.view.type === "firehose") appendMessage(m);
   } else if (data.type === "tasks") {
+    // Only re-render when the task set actually changed — re-rendering on every
+    // tick rebuilds the DOM and would reset the board's horizontal scroll.
+    const sig = JSON.stringify((data.tasks || []).map(
+      (t) => [t.id, t.status, t.claimed_by, t.title]));
     state.tasks = data.tasks;
-    if (state.view.type === "taskboard") renderTaskBoard();
+    if (sig !== state._tasksSig) {
+      state._tasksSig = sig;
+      if (state.view.type === "taskboard") renderTaskBoard();
+    }
   }
 }
 
@@ -262,7 +269,12 @@ function renderTaskBoard() {
   const extra = other.length
     ? `<div class="tb-col"><div class="tb-col-head">Other <span class="tb-count">${other.length}</span></div>${other.map(taskCard).join("")}</div>`
     : "";
+  // preserve horizontal scroll across re-renders so the view doesn't snap back
+  const prev = box.querySelector(".taskboard");
+  const sx = prev ? prev.scrollLeft : 0;
   box.innerHTML = `<div class="taskboard">${colHtml}${extra}</div>`;
+  const now = box.querySelector(".taskboard");
+  if (now) now.scrollLeft = sx;
 }
 
 function taskCard(t) {
