@@ -92,6 +92,14 @@ def build_spawn_plan(name: str, path: str, machine: str, session: str,
       local     -> bool          target is this host (argv exec, no shell)
       plus name/session/bridge_session/target/machine/seed_delay.
     """
+    # Spawning drives tmux + (for remote) ssh, which aren't available on Windows.
+    # Fail with a clear message instead of crashing on a missing tmux (issue #15).
+    from . import transport as _t
+    if _t.is_windows():
+        raise ValueError(
+            "spawning new agents isn't supported on Windows yet (no tmux). "
+            "Connect an agent manually instead: hubcli listen --name <name> "
+            "--transport file  (see docs/windows-quickstart.md).")
     if not (name or "").strip():
         raise ValueError("agent name is required")
     name = _safe_name(name)
