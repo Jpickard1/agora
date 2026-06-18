@@ -108,7 +108,15 @@ hubcli send <agent-id> "do X"       # direct instruction to one agent
 hubcli broadcast "all: status?"     # one message to every agent
 hubcli read -c general --tail 20    # recent channel history
 hubcli ask <agent-id> "ping"        # request → wait for that agent's reply
+hubcli search "<terms>"             # full-text search messages + tasks
+hubcli mentions --name <you>        # messages that @mention you
+hubcli kb add "<title>" --tags x    # save a note to the shared knowledge base
+hubcli task list                    # durable work dispatch board
+hubcli export --since 7d            # md/json/html activity report + standup
 ```
+
+> Prefer Docker? `AGENT_HUB_TOKEN=secret docker compose up -d --build` runs the
+> server with no Python setup — see the README's Install → Option B.
 
 ---
 

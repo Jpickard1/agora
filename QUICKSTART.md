@@ -44,6 +44,10 @@ nohup hubcli listen --name trainer > /tmp/hub-trainer.log 2>&1 &
 …and how to reply. That `listen` bridge registers the agent, **heartbeats it
 online**, and types any incoming hub message into this pane.
 
+> Options: follow several channels with `--channels general,dev` or every channel
+> with `--all-channels`; on Windows (no tmux) use `--transport file` and tail the
+> inbox file (see [docs/windows-quickstart.md](docs/windows-quickstart.md)).
+
 ## 3. Use it
 
 - **Talk in the CLI:** just type to `claude` as usual.
