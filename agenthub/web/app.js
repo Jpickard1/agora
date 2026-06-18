@@ -168,41 +168,59 @@ function agentStatus(a) {
   return { label: "listening", cls: "st-listening" };
 }
 
+function agentLi(a) {
+  const li = document.createElement("li");
+  li.className = "agent" + (a.retired ? " retired" : "");
+  const caps = (a.capabilities || []).join(", ");
+  const sess = a.tmux_session || (a.extra && a.extra.tmux_session) || "";
+  const st = agentStatus(a);
+  li.innerHTML = `
+    <div class="row1">
+      <span class="pdot ${a.online ? "online" : ""}"></span>
+      <span class="aname">${esc(a.name)}</span>
+      <span class="status-badge ${st.cls}">${st.label}</span>
+    </div>
+    ${a.activity ? `<div class="ameta work">▸ ${esc(a.activity)}</div>` : ""}
+    <div class="ameta">🖥 ${esc(a.host || "?")}${sess ? ` · ⧉ ${esc(sess)}` : ""}</div>
+    <div class="ameta">${a.online ? "seen just now" : "seen " + rel(a.age)}</div>
+    ${caps ? `<div class="caps">${esc(caps)}</div>` : ""}`;
+  li.title = "Click to send a direct instruction";
+  li.onclick = () => selectView({ type: "agent", id: a.id, name: a.name });
+  return li;
+}
+
 function renderAgents() {
   const ul = $("#agent-list");
   ul.innerHTML = "";
+  // Auto-retire (issue #11): split long-offline agents into a collapsed group.
+  const active = state.agents.filter((a) => !a.retired);
+  const retired = state.agents.filter((a) => a.retired);
   const online = state.agents.filter((a) => a.online).length;
-  $("#agent-count").textContent = `${online}/${state.agents.length}`;
+  $("#agent-count").textContent = `${online}/${active.length}`;
   if (!state.agents.length) {
     ul.innerHTML = `<li class="empty" style="margin-top:10px">no agents yet</li>`;
   }
-  state.agents.forEach((a) => {
-    const li = document.createElement("li");
-    li.className = "agent";
-    const caps = (a.capabilities || []).join(", ");
-    const sess = a.tmux_session || (a.extra && a.extra.tmux_session) || "";
-    const st = agentStatus(a);
-    li.innerHTML = `
-      <div class="row1">
-        <span class="pdot ${a.online ? "online" : ""}"></span>
-        <span class="aname">${esc(a.name)}</span>
-        <span class="status-badge ${st.cls}">${st.label}</span>
-      </div>
-      ${a.activity ? `<div class="ameta work">▸ ${esc(a.activity)}</div>` : ""}
-      <div class="ameta">🖥 ${esc(a.host || "?")}${sess ? ` · ⧉ ${esc(sess)}` : ""}</div>
-      <div class="ameta">${a.online ? "seen just now" : "seen " + rel(a.age)}</div>
-      ${caps ? `<div class="caps">${esc(caps)}</div>` : ""}`;
-    li.title = "Click to send a direct instruction";
-    li.onclick = () => selectView({ type: "agent", id: a.id, name: a.name });
-    ul.appendChild(li);
-  });
+  active.forEach((a) => ul.appendChild(agentLi(a)));
+
+  if (retired.length) {
+    const head = document.createElement("li");
+    head.className = "retired-head";
+    head.innerHTML = `<span>${state.showRetired ? "▾" : "▸"} Retired</span>`
+      + `<span class="count">${retired.length}</span>`;
+    head.title = "Agents offline a long time — click to " +
+      (state.showRetired ? "hide" : "show");
+    head.onclick = () => { state.showRetired = !state.showRetired; renderAgents(); };
+    ul.appendChild(head);
+    if (state.showRetired) retired.forEach((a) => ul.appendChild(agentLi(a)));
+  }
   renderDmList();
 }
 
 function renderDmList() {
   const ul = $("#dm-list");
   ul.innerHTML = "";
-  state.agents.forEach((a) => {
+  // Keep the DM list focused on current agents; retired ones are hidden.
+  state.agents.filter((a) => !a.retired).forEach((a) => {
     const li = document.createElement("li");
     li.innerHTML = `<span class="pdot ${a.online ? "online" : ""}" style="margin-right:2px"></span><span>${esc(a.name)}</span>`;
     li.onclick = () => selectView({ type: "agent", id: a.id, name: a.name });
