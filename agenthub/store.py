@@ -141,6 +141,7 @@ class HubStore:
         self.uploads_dir = self.root / "uploads"
         self.tasks_dir = self.root / "tasks"
         self.kb_dir = self.root / "kb"
+        self.projects_dir = self.root / "projects"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -149,7 +150,7 @@ class HubStore:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
                   self.broadcast_dir, self.uploads_dir, self.tasks_dir,
-                  self.kb_dir):
+                  self.kb_dir, self.projects_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -914,3 +915,139 @@ class HubStore:
         scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
         ranked = [e for _, _, e in scored]
         return ranked[:limit] if limit else ranked
+
+    # -- projects (issue #22) ---------------------------------------------
+    # A Project groups tasks + channels under a named goal with milestones,
+    # and rolls up progress from the durable task store. One JSON per project.
+
+    def project_new(self, project_id, name="", goal="", owner="",
+                    created_by=""):
+        """Create a project (idempotent — returns the existing one untouched)."""
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        pid = _safe_name(project_id)
+        path = self.projects_dir / f"{pid}.json"
+        if not path.exists():
+            _atomic_write_json(path, {
+                "id": pid,
+                "name": name or project_id,
+                "goal": goal,
+                "owner": owner,
+                "milestones": [],          # [{name, done}]
+                "task_ids": [],
+                "channels": [],
+                "created_by": created_by,
+                "created_ts": _now(),
+                "updated_ts": _now(),
+            })
+        return self.project_get(pid, rollup=False)
+
+    def project_get(self, project_id, rollup=True):
+        rec = _read_json(self.projects_dir / f"{_safe_name(project_id)}.json")
+        if rec is None:
+            return None
+        if rollup:
+            rec = dict(rec)
+            rec["progress"] = self.project_progress(project_id)
+        return rec
+
+    def _project_save(self, rec):
+        rec["updated_ts"] = _now()
+        _atomic_write_json(self.projects_dir / f"{rec['id']}.json", rec)
+        return rec
+
+    def project_update(self, project_id, name=None, goal=None, owner=None):
+        rec = self.project_get(project_id, rollup=False)
+        if rec is None:
+            return None
+        if name is not None:
+            rec["name"] = name
+        if goal is not None:
+            rec["goal"] = goal
+        if owner is not None:
+            rec["owner"] = owner
+        return self._project_save(rec)
+
+    def project_add_task(self, project_id, task_id):
+        rec = self.project_get(project_id, rollup=False)
+        if rec is None:
+            return None
+        if task_id not in rec["task_ids"]:
+            rec["task_ids"].append(task_id)
+            self._project_save(rec)
+        return self.project_get(project_id)
+
+    def project_add_channel(self, project_id, channel):
+        rec = self.project_get(project_id, rollup=False)
+        if rec is None:
+            return None
+        ch = _safe_name(channel)
+        if ch not in rec["channels"]:
+            rec["channels"].append(ch)
+            self._project_save(rec)
+        return self.project_get(project_id)
+
+    def project_add_milestone(self, project_id, name, done=False):
+        rec = self.project_get(project_id, rollup=False)
+        if rec is None:
+            return None
+        if not any(m["name"] == name for m in rec["milestones"]):
+            rec["milestones"].append({"name": name, "done": bool(done)})
+            self._project_save(rec)
+        return self.project_get(project_id)
+
+    def project_set_milestone(self, project_id, name, done):
+        rec = self.project_get(project_id, rollup=False)
+        if rec is None:
+            return None
+        changed = False
+        for m in rec["milestones"]:
+            if m["name"] == name:
+                m["done"] = bool(done)
+                changed = True
+        if changed:
+            self._project_save(rec)
+        return self.project_get(project_id)
+
+    def project_delete(self, project_id):
+        path = self.projects_dir / f"{_safe_name(project_id)}.json"
+        if path.exists():
+            path.unlink()
+            return True
+        return False
+
+    def project_progress(self, project_id):
+        """Roll up the project's task statuses into a progress summary."""
+        rec = _read_json(self.projects_dir / f"{_safe_name(project_id)}.json")
+        if rec is None:
+            return None
+        by_status = {}
+        for tid in rec.get("task_ids", []):
+            t = self.get_task(tid)
+            status = t["status"] if t else "unknown"
+            by_status[status] = by_status.get(status, 0) + 1
+        total = sum(by_status.values())
+        done = by_status.get("done", 0)
+        ms = rec.get("milestones", [])
+        ms_done = sum(1 for m in ms if m.get("done"))
+        return {
+            "total_tasks": total,
+            "by_status": by_status,
+            "done": done,
+            "percent": round(100 * done / total) if total else 0,
+            "milestones_total": len(ms),
+            "milestones_done": ms_done,
+        }
+
+    def project_list(self):
+        """All projects (newest-updated first), each with its progress rollup."""
+        if not self.projects_dir.exists():
+            return []
+        out = []
+        for f in self.projects_dir.iterdir():
+            if f.suffix == ".json" and f.is_file():
+                rec = _read_json(f)
+                if rec:
+                    rec["progress"] = self.project_progress(rec["id"])
+                    out.append(rec)
+        out.sort(key=lambda r: r.get("updated_ts", 0), reverse=True)
+        return out
