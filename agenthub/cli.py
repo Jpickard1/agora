@@ -28,7 +28,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .config import resolve_root, resolve_token, write_pointer
+from .config import resolve_root, resolve_token, write_pointer, set_pointer
 from .store import HubStore
 from .client import HubClient, default_agent_id
 
@@ -58,10 +58,29 @@ def cmd_init(args):
     root = resolve_root(args.root)
     store = HubStore(root)
     cfg = store.init(token=args.token)
-    write_pointer(root)
     print(f"Hub initialised at: {root}")
     print(f"Shared token:       {cfg['token']}")
-    print(f"Pointer written to: ~/.agent-hub-path")
+
+    # Pointer handling (issue #39): never silently clobber an existing pointer to
+    # a DIFFERENT hub — that breaks every other `hubcli` on the box (e.g. a test
+    # init repointing the shared hub). Only write when safe, or with --set-default.
+    if args.no_pointer:
+        print("Pointer:            left unchanged (--no-pointer)")
+    else:
+        action, previous = set_pointer(root, force=args.set_default)
+        if action == "written":
+            print(f"Pointer written to: ~/.agent-hub-path")
+        elif action == "unchanged":
+            print(f"Pointer:            already → {previous} (unchanged)")
+        elif action == "overwritten":
+            print(f"Pointer updated:    {previous} → {root} (--set-default)")
+        elif action == "refused":
+            print(f"\n⚠️  ~/.agent-hub-path already points to a DIFFERENT hub:")
+            print(f"      {previous}")
+            print(f"    Left it untouched so this init can't hijack the shared hub.")
+            print(f"    • make THIS root the default:  hubcli init --root {root} --set-default")
+            print(f"    • or use this hub for one-off:  AGENT_HUB_ROOT={root} hubcli ...")
+
     print("\nShare these with your agents/servers:")
     print(f"  export AGENT_HUB_ROOT={root}")
     print(f"  export AGENT_HUB_TOKEN={cfg['token']}")
@@ -897,6 +916,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("init", help="Initialise a hub directory")
     sp.add_argument("--token", help="Shared token (generated if omitted)")
+    sp.add_argument("--set-default", dest="set_default", action="store_true",
+                    help="Make this root the default in ~/.agent-hub-path even if "
+                         "it already points to a different hub")
+    sp.add_argument("--no-pointer", dest="no_pointer", action="store_true",
+                    help="Don't touch ~/.agent-hub-path at all (safe for tests)")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("register", help="Register/announce an agent")
