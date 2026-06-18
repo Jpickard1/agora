@@ -49,7 +49,7 @@ html, body { height: 100%; overflow: hidden; }
 .section-head button:hover { color: var(--text); }
 .count { text-transform: none; }
 
-.list { list-style: none; margin: 0; padding: 0 8px; overflow-y: auto; }
+.list { list-style: none; margin: 0; padding: 0 8px; }
 .list li { padding: 7px 10px; border-radius: 6px; cursor: pointer; color: var(--muted); display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list li:hover { background: var(--bg3); color: var(--text); }
 .list li.active { background: var(--accent); color: #fff; }
@@ -406,3 +406,12 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
   font-size:12px;padding:2px 6px;border-radius:6px;display:flex;align-items:center;gap:4px}
 .settings-btn:hover{color:var(--text);background:var(--bg3)}
 .settings-btn #me-name{font-weight:600}
+
+/* ---- sidebar: single scroll container + collapsible sections (issue #76) ---- */
+.sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; }   /* the ONE sidebar scrollbar */
+.section-head.collapsible { cursor: pointer; user-select: none; }
+.section-head.collapsible:hover { color: var(--text); }
+.section-head .chev { display: inline-block; font-size: 10px; width: 10px;
+  transition: transform .15s ease; color: var(--muted); }
+.section-head.collapsed .chev { transform: rotate(-90deg); }
+/* the data-section-body lists hide via the shared .hidden class when collapsed */

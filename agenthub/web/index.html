@@ -22,24 +22,26 @@
     <!-- Channels / DMs sidebar -->
     <aside class="sidebar">
       <div class="brand">🏛️ Agora</div>
-      <div class="section-head"><span>Manage</span></div>
-      <ul class="list">
-        <li id="nav-mentions"><span>🔔</span><span>Mentions</span><span id="mention-badge" class="nav-badge hidden">0</span></li>
-        <li id="nav-projects"><span>📁</span><span>Projects</span></li>
-        <li id="nav-taskboard"><span>📋</span><span>Task board</span></li>
-        <li id="nav-kb"><span>📚</span><span>Knowledge base</span></li>
-        <li id="nav-usage"><span>📊</span><span>Usage &amp; efficiency</span></li>
-        <li id="nav-graph"><span>🕸️</span><span>Comm graph</span></li>
-        <li id="nav-firehose"><span>📡</span><span>All activity</span></li>
-        <li id="nav-broadcast"><span>📢</span><span>Broadcast to all</span></li>
-      </ul>
-      <div class="section-head">
-        <span>Channels</span>
-        <button id="add-channel" title="New channel">＋</button>
+      <div class="sidebar-scroll">
+        <div class="section-head collapsible" data-section="manage"><span class="chev">▾</span><span>Manage</span></div>
+        <ul class="list" data-section-body="manage">
+          <li id="nav-mentions"><span>🔔</span><span>Mentions</span><span id="mention-badge" class="nav-badge hidden">0</span></li>
+          <li id="nav-projects"><span>📁</span><span>Projects</span></li>
+          <li id="nav-taskboard"><span>📋</span><span>Task board</span></li>
+          <li id="nav-kb"><span>📚</span><span>Knowledge base</span></li>
+          <li id="nav-usage"><span>📊</span><span>Usage &amp; efficiency</span></li>
+          <li id="nav-graph"><span>🕸️</span><span>Comm graph</span></li>
+          <li id="nav-firehose"><span>📡</span><span>All activity</span></li>
+          <li id="nav-broadcast"><span>📢</span><span>Broadcast to all</span></li>
+        </ul>
+        <div class="section-head collapsible" data-section="channels">
+          <span class="chev">▾</span><span>Channels</span>
+          <button id="add-channel" title="New channel">＋</button>
+        </div>
+        <ul id="channel-list" class="list" data-section-body="channels"></ul>
+        <div class="section-head collapsible" data-section="dm"><span class="chev">▾</span><span>Direct / Instruct</span></div>
+        <ul id="dm-list" class="list" data-section-body="dm"></ul>
       </div>
-      <ul id="channel-list" class="list"></ul>
-      <div class="section-head"><span>Direct / Instruct</span></div>
-      <ul id="dm-list" class="list"></ul>
       <div class="status-bar"><span id="conn-dot" class="dot"></span><span id="conn-text">connecting…</span><button id="settings-btn" class="settings-btn" title="Settings — your display name">⚙ <span id="me-name"></span></button></div>
     </aside>
 
