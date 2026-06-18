@@ -606,6 +606,41 @@ def cmd_project_add(args):
     _print_project(store.project_get(args.id), verbose=True)
 
 
+def cmd_research(args):
+    from . import research as R
+    store = _store(args)
+    search_key = None if args.no_search else os.environ.get("AGORA_SEARCH_KEY")
+    out = R.research(args.question, urls=args.url, search_key=search_key,
+                     max_sources=args.max_sources, timeout=args.timeout)
+    if args.json:
+        print(json.dumps({k: v for k, v in out.items()}, indent=2))
+        return
+
+    saved_id = None
+    if not args.no_kb:
+        title = f"Research: {args.question}"
+        e = store.kb_add(title, body=out["report_md"],
+                         tags=["research"] + [t for t in (args.tags or "").split(",") if t.strip()],
+                         kind="note", author=args.author or "researcher",
+                         author_name=args.author or "researcher")
+        saved_id = e["id"]
+    if args.post:
+        store.post_channel(args.post, out["report_md"],
+                           author=args.author or "researcher",
+                           author_name=args.author or "researcher",
+                           author_kind="agent",
+                           host=socket.gethostname().split(".")[0])
+
+    print(out["report_md"])
+    ok = sum(1 for s in out["sources"] if s.get("ok"))
+    print(f"\n— {ok}/{len(out['sources'])} sources fetched"
+          + (f" · search {'used' if out['search_used'] else 'not used'}"))
+    if saved_id:
+        print(f"— saved to KB as '{saved_id}'  (hubcli kb get {saved_id})")
+    if args.post:
+        print(f"— posted to #{args.post}")
+
+
 def cmd_web_fetch(args):
     from . import web_access as web
     r = web.fetch_url(args.url, timeout=args.timeout, max_bytes=args.max_bytes)
@@ -1226,6 +1261,24 @@ def build_parser() -> argparse.ArgumentParser:
     wp.add_argument("--timeout", type=float, default=12.0)
     wp.add_argument("--json", action="store_true")
     wp.set_defaults(func=cmd_web_search)
+
+    # research pipeline: gather -> analyze -> sourced report (issue #24)
+    sp = sub.add_parser("research", help="Research a question into a sourced report")
+    sp.add_argument("question")
+    sp.add_argument("--url", action="append",
+                    help="Source URL to include (repeatable); used as sources when "
+                         "no search key is set")
+    sp.add_argument("--max-sources", dest="max_sources", type=int, default=5)
+    sp.add_argument("--no-search", dest="no_search", action="store_true",
+                    help="Ignore AGORA_SEARCH_KEY; use only --url sources")
+    sp.add_argument("--no-kb", dest="no_kb", action="store_true",
+                    help="Don't save the report to the knowledge base")
+    sp.add_argument("--post", metavar="CHANNEL", help="Also post the report to a channel")
+    sp.add_argument("--tags", help="Extra KB tags (comma-separated)")
+    sp.add_argument("--author", help="Author name for KB/post")
+    sp.add_argument("--timeout", type=float, default=12.0)
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_research)
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")

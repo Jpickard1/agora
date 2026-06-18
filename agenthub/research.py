@@ -100,7 +100,7 @@ def extractive_synthesis(question, sources, max_findings=8):
         if not s.get("ok") or not s.get("text"):
             continue
         for sent in _SENT_SPLIT.split(s["text"]):
-            sent = sent.strip()
+            sent = " ".join(sent.split())   # collapse newlines/runs of whitespace
             if len(sent) < 40 or len(sent) > 400:
                 continue
             low = sent.lower()
