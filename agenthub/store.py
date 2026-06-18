@@ -1154,3 +1154,41 @@ class HubStore:
                 out.append(rec)
         out.sort(key=lambda r: r.get("acquired_ts", 0), reverse=True)
         return out
+
+
+# -- @mentions (issue #52) -------------------------------------------------
+
+import re as _re_mentions
+_MENTION_RE = _re_mentions.compile(r"@([A-Za-z0-9][A-Za-z0-9_.\-]*)")
+_MENTION_ALL = {"all", "everyone", "channel", "here"}
+
+
+def extract_mentions(text):
+    """Lower-cased @mentions in a message ('@Worker1 hi' -> {'worker1'})."""
+    return {m.lower() for m in _MENTION_RE.findall(text or "")}
+
+
+def message_mentions(text, viewer):
+    """True if `text` @mentions `viewer` (by name) or @all/@everyone/@here."""
+    ms = extract_mentions(text)
+    if not ms:
+        return False
+    return viewer.lower() in ms or bool(ms & _MENTION_ALL)
+
+
+def collect_mentions(store, viewer, since_ts=0.0, limit=None):
+    """All channel + broadcast messages that @mention `viewer` (newest first).
+    Self-authored messages are skipped (you don't get notified by your own posts).
+    Each result carries its 'channel' (or '*' for broadcast) for context."""
+    hits = []
+    for ch in store.list_channels():
+        for m in store.read_channel(ch["name"], since_ts=since_ts):
+            if (m.get("author") != viewer and m.get("author_name") != viewer
+                    and message_mentions(m.get("text", ""), viewer)):
+                hits.append({**m, "channel": m.get("channel", ch["name"])})
+    for m in store.read_broadcast(since_ts=since_ts):
+        if (m.get("author") != viewer and m.get("author_name") != viewer
+                and message_mentions(m.get("text", ""), viewer)):
+            hits.append({**m, "channel": "*"})
+    hits.sort(key=lambda m: m.get("ts", 0), reverse=True)
+    return hits[:limit] if limit else hits
