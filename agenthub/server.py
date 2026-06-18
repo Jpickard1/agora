@@ -204,6 +204,50 @@ def create_app(root: str | Path) -> FastAPI:
             host=payload.get("host", "web"), meta=meta)
         return m.to_dict()
 
+    # -- spawn a new agent (HUMAN-ONLY, via the UI) ----------------------
+    @app.post("/api/agents/spawn")
+    def spawn_agent(payload: dict = Body(...),
+                    x_hub_token: str | None = Header(default=None)):
+        """Create + connect a brand-new live agent (claude session + bridge).
+
+        Intended for USERS only: spawning is exposed solely here (token-gated)
+        and via the browser UI — there is no hubcli/HubClient/bridge path to it,
+        so a connected agent following the normal protocol has no tool to call
+        it. (Under a single shared token this is a convention, not a hard
+        boundary — kept simple per the project owner.) Every spawn is logged
+        server-side, and the shell-out is argv-exec locally / shlex-quoted over
+        ssh with validated inputs."""
+        check_token(x_hub_token)
+        from .spawn import run_spawn
+        name = (payload.get("name") or "").strip()
+        path = (payload.get("path") or "").strip()
+        machine = (payload.get("machine") or "").strip()
+        session = (payload.get("session") or "").strip()
+        tasks = (payload.get("tasks") or "").strip()
+        if not name or not path:
+            raise HTTPException(400, "name and path are required")
+        # Don't clobber an agent that's already online under this name.
+        existing = store.get_agent(name)
+        if existing and (time.time() - existing.get("last_seen", 0)) <= 30 \
+                and existing.get("status") != "offline":
+            raise HTTPException(409, f"an agent named '{name}' is already online")
+        try:
+            plan = run_spawn(name, path, machine, session, tasks,
+                             hub_root=str(store.root))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            raise HTTPException(500, f"spawn failed: {e}")
+        # Announce in #general so everyone sees a new agent is starting up.
+        store.post_channel(
+            "general",
+            f"🚀 spawning new agent '{plan['name']}' on {plan['target']} "
+            f"(tmux {plan['session']}) — it will announce itself when ready.",
+            author="system:spawn", author_name="system", author_kind="system",
+            host="web")
+        return {"ok": True, "name": plan["name"], "session": plan["session"],
+                "bridge_session": plan["bridge_session"], "target": plan["target"]}
+
     # -- image / file uploads --------------------------------------------
     @app.post("/api/upload")
     def upload(payload: dict = Body(...),

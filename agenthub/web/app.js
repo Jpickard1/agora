@@ -31,7 +31,11 @@ async function api(path, opts = {}) {
   if (state.token) headers["X-Hub-Token"] = state.token;
   const res = await fetch(path, Object.assign({}, opts, { headers }));
   if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error("http " + res.status);
+  if (!res.ok) {
+    let detail = "http " + res.status;
+    try { const j = await res.json(); if (j && j.detail) detail = j.detail; } catch (_) { /* keep default */ }
+    throw new Error(detail);
+  }
   return res.status === 204 ? null : res.json();
 }
 
@@ -359,6 +363,47 @@ $("#add-channel").onclick = async () => {
   await api("/api/channels", { method: "POST", body: JSON.stringify({ name }) });
   await refreshChannels();
   selectView({ type: "channel", id: name.trim().toLowerCase().replace(/[^a-z0-9_.@-]+/g, "-") });
+};
+
+/* ---------------- spawn a new agent (users only) ---------------- */
+const spawnModal = $("#spawn-modal");
+function openSpawn() {
+  $("#spawn-err").textContent = "";
+  spawnModal.classList.remove("hidden");
+  $("#spawn-name").focus();
+}
+function closeSpawn() { spawnModal.classList.add("hidden"); }
+
+$("#add-agent").onclick = openSpawn;
+$("#spawn-cancel").onclick = closeSpawn;
+// click the dark backdrop (not the card) to dismiss
+spawnModal.addEventListener("click", (e) => { if (e.target === spawnModal) closeSpawn(); });
+
+$("#spawn-go").onclick = async () => {
+  const name = $("#spawn-name").value.trim();
+  const path = $("#spawn-path").value.trim();
+  const tasks = $("#spawn-tasks").value.trim();
+  const machine = $("#spawn-machine").value.trim();
+  const session = $("#spawn-session").value.trim();
+  const err = $("#spawn-err");
+  err.textContent = "";
+  if (!name || !path) { err.textContent = "Agent name and creation path are required."; return; }
+  const go = $("#spawn-go");
+  go.disabled = true;
+  go.textContent = "Creating…";
+  try {
+    await api("/api/agents/spawn", { method: "POST",
+      body: JSON.stringify({ name, path, tasks, machine, session }) });
+    ["#spawn-name", "#spawn-path", "#spawn-tasks", "#spawn-machine", "#spawn-session"]
+      .forEach((s) => { $(s).value = ""; });
+    closeSpawn();
+    selectView({ type: "channel", id: "general" });   // watch it announce itself
+  } catch (e) {
+    err.textContent = "Could not create agent: " + e.message;
+  } finally {
+    go.disabled = false;
+    go.textContent = "Create & connect";
+  }
 };
 
 /* periodic agent refresh as a backstop to the SSE presence push */
