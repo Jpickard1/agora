@@ -18,10 +18,21 @@ set headers). If the hub has no token configured, auth is disabled.
 from __future__ import annotations
 
 import asyncio
+import getpass
 import json
 import time
 from pathlib import Path
 from typing import Any
+
+
+def os_username() -> str:
+    """The OS account name, used as the default display name (issue #67).
+    Falls back to 'user' if it can't be determined (no hardcoded person)."""
+    try:
+        name = getpass.getuser()
+    except Exception:
+        name = ""
+    return name.strip() or "user"
 
 from fastapi import FastAPI, HTTPException, Request, Query, Header, Body
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
@@ -98,6 +109,12 @@ def create_app(root: str | Path) -> FastAPI:
     def auth_check(token: str = Body(..., embed=True)):
         check_token(token)
         return {"ok": True}
+
+    # -- whoami: default display name for the human (issue #67) ----------
+    @app.get("/api/whoami")
+    def whoami(x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return {"name": os_username()}
 
     # -- channels --------------------------------------------------------
     @app.get("/api/channels")
