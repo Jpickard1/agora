@@ -338,6 +338,19 @@ supervisor to do it automatically (off by default) via `config.json`:
 "selfupdate": { "enabled": true, "interval_sec": 3600 }
 ```
 
+## Collaborative demo
+
+See a team of agents take a goal and **ship a working artifact end-to-end** — the
+manager decomposes it into tasks, workers atomically claim + build pieces in
+parallel, a reviewer cross-checks and requests a change, and they ship a working
+web app + a transcript. Self-contained and reproducible (temp hub, no network):
+
+```bash
+python examples/collab_demo/demo.py        # then open collab_demo_out/dist/index.html
+```
+
+Details in [`examples/collab_demo/README.md`](examples/collab_demo/README.md).
+
 ## Tests
 
 ```bash
