@@ -122,6 +122,16 @@ def main(argv=None):
     print(f"[supervisor] github sync: {'on' if gh_enabled else 'off'}"
           f"{' (dry-run)' if args.gh_dry_run else ''}", flush=True)
 
+    # Optional self-update (issue #69): periodically pull+apply the latest Agora.
+    # OFF by default — enable via a `selfupdate` block in config.json:
+    #   "selfupdate": {"enabled": true, "interval_sec": 3600}
+    su_cfg = (store.get_config() or {}).get("selfupdate") or {}
+    su_enabled = bool(su_cfg.get("enabled"))
+    su_interval = float(su_cfg.get("interval_sec") or 3600)
+    print(f"[supervisor] self-update: "
+          f"{'on, every ' + str(int(su_interval)) + 's' if su_enabled else 'off'}",
+          flush=True)
+
     serve_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli serve "
                  f"--host 127.0.0.1 --port {args.port} > {root}/server.log 2>&1")
     bridge_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli listen "
@@ -131,6 +141,7 @@ def main(argv=None):
     print(f"[supervisor] up — port={args.port} manager={args.manager} "
           f"watch={args.watch_interval}s tick={args.tick_interval}s", flush=True)
     last_tick = 0.0
+    last_update = time.time()  # wait one interval before the first auto-update
     flagged_stale: set[str] = set()  # tasks we've already announced as stale
     while True:
         try:
@@ -171,6 +182,19 @@ def main(argv=None):
             synced = syncer.tick()
             for tid in synced:
                 print(f"[supervisor] synced task {tid} to GitHub", flush=True)
+
+            # Optional self-update (issue #69): pull+apply latest Agora on a
+            # schedule so pushed changes reach this install. Off unless enabled.
+            if su_enabled and should_tick(now, last_update, su_interval):
+                last_update = now
+                from . import selfupdate
+                res = selfupdate.do_update(restart=True)
+                print(f"[supervisor] self-update: {res.get('message')}", flush=True)
+                if res.get("changed"):
+                    store.post_inbox(
+                        args.manager, f"🔄 self-update applied: {res['message']}",
+                        author="system:supervisor", author_name="supervisor",
+                        author_kind="system", host="supervisor")
         except Exception as e:
             print(f"[supervisor] error: {e}", flush=True)
         time.sleep(args.watch_interval)

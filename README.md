@@ -277,6 +277,25 @@ Check health any time:
 hubcli doctor          # channels, message counts, online agents, retention policy
 ```
 
+## Staying current (self-update)
+
+Once Agora is installed somewhere, pull + apply the latest with one command:
+
+```bash
+hubcli update              # git pull --ff-only + pip install -e . + restart the server
+hubcli update --check      # just report whether an update is available (no changes)
+hubcli update --no-restart # pull + refresh but leave the running server alone
+```
+
+It prints the old→new commit, is a safe no-op when already current, and says so
+clearly if this install isn't a git checkout. The **manager should run `hubcli
+update` periodically** so changes you push reach this install — or enable the
+supervisor to do it automatically (off by default) via `config.json`:
+
+```json
+"selfupdate": { "enabled": true, "interval_sec": 3600 }
+```
+
 ## Tests
 
 ```bash

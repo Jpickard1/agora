@@ -22,6 +22,13 @@ Then tell the user (in chat) that you're up:
 hubcli post -c general --author manager "manager online — hub is up, watching issues."
 ```
 
+## Stay current (issue #69)
+
+So changes jpic pushes reach this install, **periodically run `hubcli update`**
+(git pull + `pip install -e .` + server restart; safe no-op if already current).
+Or enable the supervisor to auto-pull by adding to `config.json`:
+`"selfupdate": {"enabled": true, "interval_sec": 3600}` (off by default).
+
 ## Your loop
 
 You are turn-based, so you act when **poked**. You get poked two ways, both
