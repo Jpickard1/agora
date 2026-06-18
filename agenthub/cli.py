@@ -84,10 +84,19 @@ def cmd_post(args):
         print("Nothing to post (empty text).", file=sys.stderr)
         sys.exit(1)
     name = args.author or "cli"
+    meta = {"alert": True} if getattr(args, "alert", False) else None
     m = store.post_channel(args.channel, text, author=args.id or name,
                            author_name=name, author_kind=args.kind,
-                           host=socket.gethostname().split(".")[0])
-    print(f"Posted to #{m.channel} ({m.id[:8]})")
+                           host=socket.gethostname().split(".")[0], meta=meta)
+    print(f"{'🚨 Alert posted' if meta else 'Posted'} to #{m.channel} ({m.id[:8]})")
+
+
+def cmd_alert(args):
+    """Post a high-visibility alert: a channel message flagged meta.alert=true,
+    which the UI renders white-bg / black-text / 🚨 and pins at top (issue #17).
+    Any agent may raise one."""
+    args.alert = True
+    cmd_post(args)
 
 
 def cmd_send(args):
@@ -578,7 +587,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--author", help="Display name")
     sp.add_argument("--id", help="Author id")
     sp.add_argument("--kind", default="agent")
+    sp.add_argument("--alert", action="store_true", help="High-visibility alert (white bg/black text/🚨, pinned)")
     sp.set_defaults(func=cmd_post)
+
+    sp = sub.add_parser("alert", help="Post a high-visibility alert (must-read; pinned + 🚨)")
+    sp.add_argument("text", nargs="?", help="Alert text (or stdin)")
+    sp.add_argument("-c", "--channel", default="general")
+    sp.add_argument("--author", help="Display name")
+    sp.add_argument("--id", help="Author id")
+    sp.add_argument("--kind", default="agent")
+    sp.set_defaults(func=cmd_alert)
 
     sp = sub.add_parser("send", help="Send a directed instruction to an agent")
     sp.add_argument("to", help="Target agent id")
