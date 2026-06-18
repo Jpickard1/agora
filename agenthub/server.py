@@ -224,6 +224,34 @@ def create_app(root: str | Path) -> FastAPI:
         from . import web_access as web
         return web.search(q, backend=backend, limit=limit)
 
+    # -- advisory locks (issue #10) -------------------------------------
+    @app.get("/api/locks")
+    def locks_list(x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.list_locks()
+
+    @app.post("/api/locks")
+    def lock_acquire(payload: dict = Body(...),
+                     x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        resource = (payload.get("resource") or "").strip()
+        if not resource:
+            raise HTTPException(400, "resource required")
+        owner = payload.get("owner") or payload.get("author_name") or "web"
+        return store.acquire_lock(resource, owner=owner, owner_name=owner,
+                                  note=payload.get("note", ""))
+
+    @app.post("/api/locks/release")
+    def lock_release(payload: dict = Body(...),
+                     x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        resource = (payload.get("resource") or "").strip()
+        if not resource:
+            raise HTTPException(400, "resource required")
+        owner = payload.get("owner") or payload.get("author_name") or "web"
+        ok = store.release_lock(resource, owner=owner, force=bool(payload.get("force")))
+        return {"ok": ok}
+
     # -- projects (issue #22) -------------------------------------------
     @app.get("/api/projects")
     def projects_list(x_hub_token: str | None = Header(default=None)):
@@ -463,6 +491,8 @@ def create_app(root: str | Path) -> FastAPI:
                     yield _sse({"type": "agents", "agents": store.list_agents()})
                     # Task-board snapshot (durable dispatch state, live).
                     yield _sse({"type": "tasks", "tasks": store.list_tasks()})
+                    # Advisory locks snapshot (issue #10).
+                    yield _sse({"type": "locks", "locks": store.list_locks()})
                 except Exception as e:  # never kill the stream on a transient FS error
                     yield _sse({"type": "error", "detail": str(e)})
                 await asyncio.sleep(1.0)
