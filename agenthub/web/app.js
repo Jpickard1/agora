@@ -1291,4 +1291,28 @@ function rel(age) {
   return Math.round(age / 86400) + "d ago";
 }
 
+/* ---------------- collapsible sidebar sections (issue #76) ---------------- */
+// Each `.section-head.collapsible` toggles the list with the matching
+// data-section-body; collapsed state persists per section in localStorage.
+function sectionBody(key) { return document.querySelector(`[data-section-body="${key}"]`); }
+
+function applySectionState(head) {
+  const key = head.dataset.section;
+  const collapsed = localStorage.getItem("agenthub.collapsed." + key) === "1";
+  head.classList.toggle("collapsed", collapsed);
+  const body = sectionBody(key);
+  if (body) body.classList.toggle("hidden", collapsed);
+}
+
+document.querySelectorAll(".section-head.collapsible").forEach((head) => {
+  applySectionState(head);                       // restore persisted state on load
+  head.addEventListener("click", (e) => {
+    if (e.target.closest("button")) return;      // don't collapse when clicking the + (new channel)
+    const key = head.dataset.section;
+    const collapsed = !head.classList.contains("collapsed");
+    localStorage.setItem("agenthub.collapsed." + key, collapsed ? "1" : "0");
+    applySectionState(head);
+  });
+});
+
 tryConnect();
