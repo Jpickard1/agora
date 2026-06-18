@@ -130,6 +130,15 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return _with_reactions(store.read_channel(channel, since_ts=since, limit=limit))
 
+    @app.get("/api/channels/{channel}/thread/{parent_id}")
+    def channel_thread(channel: str, parent_id: str,
+                       x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        th = store.read_thread(channel, parent_id)
+        th["parent"] = _with_reactions([th["parent"]])[0] if th["parent"] else None
+        th["replies"] = _with_reactions(th["replies"])
+        return th
+
     # -- reactions (issue #61) -------------------------------------------
     @app.get("/api/messages/{msg_id}/reactions")
     def get_reactions(msg_id: str, x_hub_token: str | None = Header(default=None)):
@@ -169,7 +178,8 @@ def create_app(root: str | Path) -> FastAPI:
             author=payload.get("author") or f"human:{name}",
             author_name=name,
             author_kind=payload.get("author_kind", "human"),
-            host=payload.get("host", "web"), meta=meta)
+            host=payload.get("host", "web"), meta=meta,
+            reply_to=payload.get("reply_to"))   # threaded replies (#64)
         return m.to_dict()
 
     # -- firehose: all activity merged -----------------------------------
@@ -433,7 +443,8 @@ def create_app(root: str | Path) -> FastAPI:
             author=payload.get("author") or f"human:{name}",
             author_name=name,
             author_kind=payload.get("author_kind", "human"),
-            host=payload.get("host", "web"), meta=meta)
+            host=payload.get("host", "web"), meta=meta,
+            reply_to=payload.get("reply_to"))   # threaded replies (#64)
         return m.to_dict()
 
     # -- spawn a new agent (HUMAN-ONLY, via the UI) ----------------------

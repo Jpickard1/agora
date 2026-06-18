@@ -384,3 +384,19 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .reaction-add:hover .reaction-picker { display: flex; }
 .rp-emoji { border: 0; background: none; cursor: pointer; font-size: 16px; padding: 2px 4px; border-radius: 6px; }
 .rp-emoji:hover { background: var(--bg3); }
+
+/* ---------- threaded replies (issue #64) ---------- */
+.msg.is-reply { margin-left: 22px; border-left: 2px solid var(--bg3); }
+.reply-quote { font-size: 12px; color: var(--muted); cursor: pointer; margin-bottom: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.reply-quote:hover { color: var(--text); }
+.reply-quote.muted { cursor: default; font-style: italic; }
+.msg-reply { opacity: 0; border: 0; background: none; color: var(--muted); cursor: pointer;
+  font-size: 13px; margin-left: 4px; transition: opacity .1s; }
+.msg:hover .msg-reply { opacity: .6; }
+.msg-reply:hover { opacity: 1 !important; color: var(--text); }
+.reply-bar { display: flex; align-items: center; gap: 8px; padding: 6px 18px;
+  background: var(--bg3); border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.reply-bar .rb-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-bar button { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+.reply-bar button:hover { color: var(--text); }
