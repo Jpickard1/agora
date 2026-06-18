@@ -187,6 +187,27 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- research pipeline (issue #24) ----------------------------------
+    @app.post("/api/research")
+    def research_run(payload: dict = Body(...),
+                     x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        import os as _os
+        from . import research as R
+        question = (payload.get("question") or "").strip()
+        if not question:
+            raise HTTPException(400, "question required")
+        key = None if payload.get("no_search") else _os.environ.get("AGORA_SEARCH_KEY")
+        out = R.research(question, urls=payload.get("urls"), search_key=key,
+                         max_sources=int(payload.get("max_sources", 5)))
+        if payload.get("save_kb", True):
+            name = payload.get("author") or "researcher"
+            e = store.kb_add(f"Research: {question}", body=out["report_md"],
+                             tags=["research"], kind="note",
+                             author=name, author_name=name)
+            out["kb_id"] = e["id"]
+        return out
+
     # -- agent web access (issue #19) -----------------------------------
     @app.get("/api/web/fetch")
     def web_fetch(url: str, timeout: float = 12.0,
