@@ -21,6 +21,7 @@ const state = {
   tasks: [],        // durable task-board state (live via SSE)
   messages: [],     // currently displayed
   seenIds: new Set(),
+  dismissed: new Set(),  // alert message ids the user dismissed
   es: null,
 };
 
@@ -297,6 +298,32 @@ function renderMessages(msgs) {
   }
   msgs.forEach((m) => appendMessage(m, false));
   scrollDown();
+  showAlertBanner(latestAlert(msgs));   // pin the most recent unread alert
+}
+
+// The most recent non-dismissed alert in a set of messages (or null).
+function latestAlert(msgs) {
+  for (let i = (msgs || []).length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.meta && m.meta.alert && !state.dismissed.has(m.id)) return m;
+  }
+  return null;
+}
+
+// Pin a must-read alert as a sticky banner at the top of the message pane.
+function showAlertBanner(m) {
+  const box = $("#messages");
+  if (!box) return;
+  const existing = box.querySelector(".alert-banner");
+  if (existing) existing.remove();
+  if (!m) return;
+  const b = document.createElement("div");
+  b.className = "alert-banner";
+  b.innerHTML = `<span class="alert-tag">🚨 ALERT</span>` +
+    `<span>${esc(m.text)} — <em>${esc(m.author_name || m.author)}</em></span>` +
+    `<button class="ab-dismiss" title="dismiss">✕</button>`;
+  b.querySelector(".ab-dismiss").onclick = () => { state.dismissed.add(m.id); b.remove(); };
+  box.insertBefore(b, box.firstChild);
 }
 
 function appendMessage(m, scroll = true) {
@@ -311,12 +338,14 @@ function appendMessage(m, scroll = true) {
   const img = m.meta && m.meta.image
     ? `<img class="msg-img" src="${esc(m.meta.image)}" alt="${esc((m.meta && m.meta.filename) || "image")}" onclick="window.open(this.src,'_blank')" />`
     : "";
+  const isAlert = !!(m.meta && m.meta.alert);
   const el = document.createElement("div");
-  el.className = "msg " + directed;
+  el.className = "msg " + directed + (isAlert ? " alert" : "");
   el.innerHTML = `
-    <div class="avatar">${avatar}</div>
+    <div class="avatar">${isAlert ? "🚨" : avatar}</div>
     <div class="body">
       <div class="head">
+        ${isAlert ? `<span class="alert-tag">🚨 ALERT</span>` : ""}
         <span class="author ${kind}">${esc(m.author_name || m.author)}</span>
         ${m.host ? `<span class="host">${esc(m.host)}</span>` : ""}
         <span class="time">${fmtTime(m.ts)}</span>
@@ -326,6 +355,8 @@ function appendMessage(m, scroll = true) {
     </div>`;
   box.appendChild(el);
   if (scroll) scrollDown();
+  // a live alert pins itself to the top of the pane so it can't be missed
+  if (isAlert && scroll && !state.dismissed.has(m.id)) showAlertBanner(m);
 }
 
 function scrollDown() {
