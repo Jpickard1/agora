@@ -338,3 +338,21 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .mn-where{color:var(--accent);font-weight:600}
 .mn .author{font-weight:600}
 .mn .time{color:var(--muted);margin-left:auto}
+
+/* ---- full-text search (issue #51) ---- */
+.topbar{display:flex;align-items:center;gap:12px}
+.topbar-titles{min-width:0;flex:0 1 auto}
+.search-form{margin-left:auto;flex:0 0 auto}
+.search-form #global-search{width:260px;max-width:42vw;padding:7px 12px;border-radius:18px;
+  border:1px solid var(--border);background:var(--bg3);color:var(--text);font:inherit}
+.search-form #global-search:focus{outline:none;border-color:var(--accent);width:320px}
+.search-results{padding:10px 16px;overflow-y:auto;height:100%}
+.sr{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--accent);
+  border-radius:8px;padding:8px 12px;margin-bottom:8px;cursor:pointer}
+.sr:hover{background:var(--bg3)}
+.sr-head{display:flex;gap:8px;align-items:center;font-size:12px;margin-bottom:4px}
+.sr-where{color:var(--accent);font-weight:600}
+.sr .author{font-weight:600}
+.sr .time{color:var(--muted);margin-left:auto}
+.msg.flash{animation:flashmsg 1.6s ease-out}
+@keyframes flashmsg{0%{background:rgba(88,101,242,.35)}100%{background:transparent}}

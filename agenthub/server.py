@@ -145,6 +145,16 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.firehose(since_ts=since, limit=limit)
 
+    # -- full-text search (issue #51) -----------------------------------
+    @app.get("/api/search")
+    def search(q: str, channel: str | None = None, limit: int = 50,
+               include_tasks: bool = True,
+               x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        channels = [c.strip() for c in channel.split(",") if c.strip()] if channel else None
+        return store.search_messages(q, channels=channels, limit=limit,
+                                     include_tasks=include_tasks)
+
     # -- @mentions: messages that mention a viewer (issue #52) -----------
     @app.get("/api/mentions")
     def mentions(name: str, since: float = 0.0, limit: int = 200,
