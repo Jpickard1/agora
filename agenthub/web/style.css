@@ -292,3 +292,19 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .retired-head:hover{color:var(--text)}
 .retired-head .count{margin-left:auto;background:var(--bg3);border-radius:10px;padding:0 7px}
 .agent.retired{opacity:.6}
+
+/* ---- comm graph (issue #5) ---- */
+.graph{padding:14px 18px;overflow-y:auto;height:100%}
+.gsvg{width:100%;max-width:680px;height:auto;display:block;margin:0 auto 12px}
+.gsvg .ge{fill:none;stroke:var(--accent);opacity:.7}
+.gsvg .ge:hover{opacity:1;stroke:var(--human)}
+.gsvg #gar path{fill:var(--accent)}
+.gsvg .gn{fill:var(--accent2);stroke:var(--bg);stroke-width:2}
+.gsvg .gl{fill:var(--text);font-size:12px;font-family:inherit}
+.gtable-wrap{max-width:680px;margin:0 auto}
+.gtable{width:100%;border-collapse:collapse;font-size:13px}
+.gtable th{text-align:left;color:var(--muted);font-size:11px;text-transform:uppercase;
+  letter-spacing:.03em;padding:6px 10px;border-bottom:1px solid var(--border)}
+.gtable td{padding:7px 10px;border-bottom:1px solid var(--bg2);vertical-align:top}
+.gtable td:first-child{font-weight:600;white-space:nowrap}
+.gtable b{color:var(--accent2)}

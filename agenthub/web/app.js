@@ -120,6 +120,8 @@ function handleEvent(data) {
   } else if (data.type === "inbox") {
     const m = data.message;
     if (state.view.type === "agent" && m.to === state.view.id) appendMessage(m);
+    // a new direct message changes the comm graph — refresh it live
+    if (state.view.type === "graph") refreshGraph();
   } else if (data.type === "broadcast") {
     const m = data.message;
     if (state.view.type === "broadcast" || state.view.type === "firehose") appendMessage(m);
@@ -284,7 +286,97 @@ async function selectView(view) {
     $("#view-sub").textContent = "group tasks & channels under a goal — live progress rollup";
     composer.style.display = "none";
     await refreshProjects();
+  } else if (view.type === "graph") {
+    $("#view-title").textContent = "🕸️ Comm graph";
+    $("#view-sub").textContent = "who direct-messages whom — directed, weighted by message count";
+    composer.style.display = "none";
+    await refreshGraph();
   }
+}
+
+/* ---------------- comm graph (issue #5) ---------------- */
+async function refreshGraph() {
+  if (state.view.type !== "graph") return;
+  try { state.graph = await api("/api/graph"); } catch (_) { state.graph = { nodes: [], edges: [] }; }
+  renderGraph();
+}
+
+// Dependency-free directed graph: nodes on a circle, curved arrows weighted by
+// message count, plus an adjacency table. All hand-rolled SVG — no libraries.
+function renderGraph() {
+  const box = $("#messages");
+  const g = state.graph || { nodes: [], edges: [] };
+  const nodes = g.nodes || [];
+  const edges = g.edges || [];
+  if (!nodes.length) {
+    box.innerHTML = `<div class="empty">No agent-to-agent direct messages yet — `
+      + `the graph fills in as agents DM each other.</div>`;
+    return;
+  }
+  const W = 640, H = 520, cx = W / 2, cy = H / 2;
+  const R = Math.min(cx, cy) - 70;
+  const pos = {};
+  nodes.forEach((n, i) => {
+    const ang = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+    pos[n] = { x: cx + R * Math.cos(ang), y: cy + R * Math.sin(ang), ang };
+  });
+  const maxC = Math.max(1, ...edges.map((e) => e.count));
+  const nodeR = 7;
+
+  const edgeSvg = edges.map((e) => {
+    const a = pos[e.source], b = pos[e.target];
+    if (!a || !b) return "";
+    // shorten endpoints to the node radius; curve so A→B and B→A don't overlap
+    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len, uy = dy / len;
+    const x1 = a.x + ux * nodeR, y1 = a.y + uy * nodeR;
+    const x2 = b.x - ux * (nodeR + 7), y2 = b.y - uy * (nodeR + 7);
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const curve = Math.min(40, len * 0.18);
+    const px = mx - uy * curve, py = my + ux * curve;   // perpendicular bow
+    const w = 1 + 4 * (e.count / maxC);
+    return `<path class="ge" d="M${x1.toFixed(1)} ${y1.toFixed(1)} `
+      + `Q${px.toFixed(1)} ${py.toFixed(1)} ${x2.toFixed(1)} ${y2.toFixed(1)}" `
+      + `stroke-width="${w.toFixed(2)}" marker-end="url(#gar)">`
+      + `<title>${esc(e.source)} → ${esc(e.target)}: ${e.count}</title></path>`;
+  }).join("");
+
+  const labelSvg = nodes.map((n) => {
+    const p = pos[n];
+    const out = (p.x >= cx) ? "start" : "end";
+    const lx = p.x + (p.x >= cx ? 12 : -12);
+    return `<circle class="gn" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="${nodeR}"></circle>`
+      + `<text class="gl" x="${lx.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" `
+      + `text-anchor="${out}">${esc(n)}</text>`;
+  }).join("");
+
+  // adjacency table (counts), sorted by busiest sender
+  const bySrc = {};
+  edges.forEach((e) => { (bySrc[e.source] = bySrc[e.source] || []).push(e); });
+  const rows = Object.keys(bySrc).sort().map((src) => {
+    const outs = bySrc[src].sort((a, b) => b.count - a.count)
+      .map((e) => `${esc(e.target)} <b>${e.count}</b>`).join(", ");
+    return `<tr><td>${esc(src)}</td><td>${outs}</td></tr>`;
+  }).join("");
+
+  box.innerHTML = `
+    <div class="graph">
+      <svg viewBox="0 0 ${W} ${H}" class="gsvg" preserveAspectRatio="xMidYMid meet">
+        <defs>
+          <marker id="gar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7"
+                  markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z"></path>
+          </marker>
+        </defs>
+        ${edgeSvg}
+        ${labelSvg}
+      </svg>
+      <div class="gtable-wrap">
+        <div class="usect-head">Who messages whom</div>
+        <table class="gtable"><thead><tr><th>From</th><th>→ to (count)</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+      </div>
+    </div>`;
 }
 
 /* ---------------- projects (issue #22) ---------------- */
@@ -736,6 +828,7 @@ $("#nav-projects").onclick = () => selectView({ type: "projects" });
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-kb").onclick = () => selectView({ type: "kb" });
 $("#nav-usage").onclick = () => selectView({ type: "usage" });
+$("#nav-graph").onclick = () => selectView({ type: "graph" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 
