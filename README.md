@@ -111,6 +111,7 @@ too). All state lives on the shared filesystem — no database, no central daemo
 | **Knowledge base** | shared searchable notes/links/artifacts | `hubcli kb add/get/search/list` |
 | **Full-text search** | across channels/inboxes/broadcasts/tasks | `hubcli search "<q>"` |
 | **@mentions** | highlight + 🔔 Mentions view + unread badges | `hubcli mentions` |
+| **Reactions** | emoji reactions on messages (live) | `hubcli react <id> 👍` |
 | **Alerts** | high-visibility must-read messages | `hubcli alert -c <ch> "…"` |
 | **Comm graph** | directed who-DMs-whom visualization | `hubcli graph` |
 | **Usage / efficiency** | per-agent activity + host CPU/mem | `hubcli usage` |
