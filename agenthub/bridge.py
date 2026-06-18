@@ -18,6 +18,13 @@ idle (no "esc to interrupt"/spinner and the screen has settled). A per-message
 ``--max-wait`` is a safety valve so a wrongly-detected-busy pane never starves
 delivery forever. Pass ``--no-idle-wait`` to restore the old blind behaviour.
 
+Mention routing (A4): a #channel message that @mentions only *other* agents is
+not injected into this agent's pane, so agents aren't interrupted by chatter
+that isn't for them. A message with no @mention (general) or one that mentions
+this agent / @all reaches it. The message still posts to the channel unchanged
+(the web UI shows the full stream); only terminal injection is filtered. Pass
+``--firehose`` to opt into the full stream.
+
 Your agent then replies with ordinary commands, e.g.:
     hubcli post -c general "on it"            # to the channel
     hubcli send <agent-id> "done"            # direct to another agent
@@ -30,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +45,12 @@ import time
 
 from .config import resolve_root
 from .store import HubStore
+
+
+# A mention is @ followed by an agent name/id (letters, digits, _ . -).
+_MENTION_RE = re.compile(r"@([A-Za-z0-9][A-Za-z0-9_.\-]*)")
+# Mentions that mean "everyone on the channel".
+_MENTION_ALL = {"all", "everyone", "channel", "here"}
 
 
 # Markers that mean the agent (Claude Code or similar) is actively working and
@@ -104,6 +118,27 @@ def ready_to_flush(idle_streak: int, settle_checks: int,
     return idle_streak >= settle_checks or head_age >= max_wait
 
 
+def extract_mentions(text: str) -> set[str]:
+    """Lower-cased @mentions in a message ('@Worker1, hi' -> {'worker1'})."""
+    return {m.lower() for m in _MENTION_RE.findall(text or "")}
+
+
+def channel_msg_for_me(text: str, aid: str, name: str,
+                       firehose: bool = False) -> bool:
+    """A4 mention routing: should a #channel message be injected into THIS
+    agent's pane? Yes if the agent opted into the full stream (firehose), or the
+    message has no @mention (a general message for everyone), or it mentions this
+    agent (by id or name) or @all/@everyone/@channel/@here. A message that
+    mentions ONLY other agents is skipped so this agent isn't interrupted."""
+    if firehose:
+        return True
+    mentions = extract_mentions(text)
+    if not mentions:
+        return True
+    me = {aid.lower(), name.lower()}
+    return bool(mentions & me) or bool(mentions & _MENTION_ALL)
+
+
 def inject(pane: str, text: str) -> None:
     """Type `text` into the agent's pane, then press Enter (submit the prompt).
     Newlines are flattened so the whole message is submitted as one prompt."""
@@ -129,6 +164,9 @@ def main(argv=None):
                     help="Consecutive idle observations required before injecting")
     ap.add_argument("--max-wait", type=float, default=120.0,
                     help="Force-deliver a queued message after this many seconds even if the pane looks busy")
+    ap.add_argument("--firehose", "--no-mention-filter", dest="firehose",
+                    action="store_true",
+                    help="See the full channel stream: inject every #channel message even if it @mentions only other agents")
     args = ap.parse_args(argv)
 
     pane = detect_pane(args.pane)
@@ -180,7 +218,11 @@ def main(argv=None):
             fresh: list[tuple[str, dict]] = []
             for m in store.read_channel(args.channel, since_ts=chan_cursor):
                 chan_cursor = max(chan_cursor, m["ts"])
-                if not is_mine(m):
+                # A4: skip channel messages that @mention only other agents, so
+                # we don't interrupt this agent with chatter that isn't for it.
+                if (not is_mine(m)
+                        and channel_msg_for_me(m["text"], aid, args.name,
+                                               firehose=args.firehose)):
                     fresh.append((f"#{args.channel}", m))
             for m in store.read_inbox(aid, since_ts=inbox_cursor):
                 inbox_cursor = max(inbox_cursor, m["ts"])

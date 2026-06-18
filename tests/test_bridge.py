@@ -57,6 +57,38 @@ def test_ready_to_flush_max_wait_safety_valve():
                                  head_age=200.0, max_wait=120.0) is True
 
 
+# --- A4: @mention routing -------------------------------------------------
+
+def test_extract_mentions_lowercases_and_strips_punctuation():
+    assert bridge.extract_mentions("hey @Worker1, and @probe: hi") == {"worker1", "probe"}
+    assert bridge.extract_mentions("no mentions here") == set()
+
+
+def test_no_mention_reaches_everyone():
+    assert bridge.channel_msg_for_me("status report please", "worker1", "worker1") is True
+
+
+def test_mention_of_me_reaches_me():
+    assert bridge.channel_msg_for_me("@worker1 do X", "worker1", "worker1") is True
+    # case-insensitive + trailing punctuation
+    assert bridge.channel_msg_for_me("ok @Worker1: go", "worker1", "worker1") is True
+
+
+def test_mention_of_only_others_is_skipped():
+    assert bridge.channel_msg_for_me("@probe handle this", "worker1", "worker1") is False
+    assert bridge.channel_msg_for_me("@probe and @manager sync up", "worker1", "worker1") is False
+
+
+def test_mention_all_reaches_everyone():
+    for kw in ("@all", "@everyone", "@channel", "@here"):
+        assert bridge.channel_msg_for_me(f"{kw} standup", "worker1", "worker1") is True
+
+
+def test_firehose_overrides_mention_filter():
+    assert bridge.channel_msg_for_me("@probe only", "worker1", "worker1",
+                                     firehose=True) is True
+
+
 def run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = 0
