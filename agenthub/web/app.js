@@ -917,16 +917,19 @@ function appendMessage(m, scroll = true) {
   const isAlert = !!(m.meta && m.meta.alert);
   const mentioned = mentionsViewer(m);   // @me / @all highlight (issue #52)
   const el = document.createElement("div");
-  el.className = "msg " + directed + (isAlert ? " alert" : "") + (mentioned ? " mentioned" : "");
+  el.className = "msg " + directed + (isAlert ? " alert" : "")
+    + (mentioned ? " mentioned" : "") + (m.reply_to ? " is-reply" : "");
   if (m.id) el.dataset.msgId = m.id;   // shared anchor for #51 search jump-to (worker1)
   el.innerHTML = `
     <div class="avatar">${isAlert ? "🚨" : avatar}</div>
     <div class="body">
+      ${m.reply_to ? replyQuoteHtml(m.reply_to) : ""}
       <div class="head">
         ${isAlert ? `<span class="alert-tag">🚨 ALERT</span>` : ""}
         <span class="author ${kind}">${esc(m.author_name || m.author)}</span>
         ${m.host ? `<span class="host">${esc(m.host)}</span>` : ""}
         <span class="time">${fmtTime(m.ts)}</span>
+        <button class="msg-reply" title="Reply in thread (#64)">↩</button>
       </div>
       <div class="text">${renderMarkdown(m.text)}</div>
       ${img}
@@ -934,6 +937,11 @@ function appendMessage(m, scroll = true) {
     </div>`;
   box.appendChild(el);
   renderReactions(el, m.reactions || {});   // issue #61
+  // threaded replies (#64): wire the reply button + the "jump to parent" quote
+  const rb = el.querySelector(".msg-reply");
+  if (rb) rb.onclick = () => startReply(m.id, m.author_name || m.author, m.text);
+  const rq = el.querySelector(".reply-quote[data-jump]");
+  if (rq) rq.onclick = () => jumpToMsg(rq.dataset.jump);
   if (scroll) scrollDown();
   // a live alert pins itself to the top of the pane so it can't be missed
   if (isAlert && scroll && !state.dismissed.has(m.id)) showAlertBanner(m);
@@ -985,6 +993,49 @@ function applyReactionEvent(msgId, reactions) {
   if (el) renderReactions(el, reactions || {});
 }
 
+/* ---------------- threaded replies (issue #64) ---------------- */
+// Build the "replying to" quote from the parent that's already on screen
+// (reuses the shared data-msg-id anchor); falls back to a muted note.
+function replyQuoteHtml(parentId) {
+  const p = document.querySelector(`[data-msg-id="${parentId}"]`);
+  if (!p) return `<div class="reply-quote muted">↪ in reply to an earlier message</div>`;
+  const author = (p.querySelector(".author") || {}).textContent || "someone";
+  const text = (p.querySelector(".text") || {}).textContent || "";
+  const ex = text.length > 90 ? text.slice(0, 90) + "…" : text;
+  return `<div class="reply-quote" data-jump="${esc(parentId)}" title="Jump to the message">↪ <b>${esc(author)}</b>: ${esc(ex)}</div>`;
+}
+
+function jumpToMsg(id) {
+  const el = document.querySelector(`[data-msg-id="${id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center" });
+  el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+}
+
+function startReply(id, author, text) {
+  state.replyTo = id;
+  let bar = $("#reply-bar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "reply-bar";
+    bar.className = "reply-bar";
+    const comp = $("#composer");
+    comp.parentNode.insertBefore(bar, comp);
+  }
+  const ex = (text || "").length > 60 ? text.slice(0, 60) + "…" : (text || "");
+  bar.innerHTML = `<span class="rb-text">↩ replying to <b>${esc(author)}</b>: ${esc(ex)}</span>`
+    + `<button id="reply-cancel" title="Cancel reply">✕</button>`;
+  bar.style.display = "flex";
+  $("#reply-cancel").onclick = cancelReply;
+  $("#msg-input").focus();
+}
+
+function cancelReply() {
+  state.replyTo = null;
+  const bar = $("#reply-bar");
+  if (bar) bar.style.display = "none";
+}
+
 function scrollDown() {
   const box = $("#messages");
   box.scrollTop = box.scrollHeight;
@@ -1007,7 +1058,12 @@ $("#composer").addEventListener("submit", async (e) => {
   const text = msgInput.value.trim();
   if (!text) return;
   msgInput.value = "";
-  const body = JSON.stringify({ text, author_name: state.name });
+  // threaded reply (#64): attach reply_to for channel/agent posts
+  const payload = { text, author_name: state.name };
+  if (state.replyTo) payload.reply_to = state.replyTo;
+  const body = JSON.stringify(payload);
+  const wasReply = state.replyTo;
+  cancelReply();
   try {
     if (state.view.type === "channel") {
       appendMessage(await api(`/api/channels/${encodeURIComponent(state.view.id)}/messages`, { method: "POST", body }));
@@ -1019,6 +1075,7 @@ $("#composer").addEventListener("submit", async (e) => {
     }
   } catch (err) {
     msgInput.value = text;    // restore on failure
+    if (wasReply) startReply(wasReply, "message", "");
   }
 });
 
