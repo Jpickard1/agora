@@ -606,6 +606,49 @@ def cmd_project_add(args):
     _print_project(store.project_get(args.id), verbose=True)
 
 
+def cmd_web_fetch(args):
+    from . import web_access as web
+    r = web.fetch_url(args.url, timeout=args.timeout, max_bytes=args.max_bytes)
+    if args.json:
+        print(json.dumps(r, indent=2))
+        return
+    if "error" in r:
+        print(f"✗ fetch failed: {r['error']}", file=sys.stderr)
+        sys.exit(1)
+    if r.get("title"):
+        print(f"# {r['title']}")
+    print(f"({r.get('status')} {r.get('content_type')}, {r.get('bytes')} bytes"
+          + (", truncated" if r.get("truncated") else "") + f")  {r['url']}")
+    print()
+    text = r.get("text", "")
+    if args.max_chars and len(text) > args.max_chars:
+        text = text[:args.max_chars] + "\n…[truncated]"
+    print(text)
+
+
+def cmd_web_search(args):
+    from . import web_access as web
+    r = web.search(args.query, backend=args.backend, limit=args.limit,
+                   timeout=args.timeout)
+    if args.json:
+        print(json.dumps(r, indent=2))
+        return
+    if not r.get("configured"):
+        print(r.get("message", "search not configured"))
+        return
+    if r.get("error"):
+        print(f"✗ search failed ({r.get('backend')}): {r['error']}", file=sys.stderr)
+        sys.exit(1)
+    if not r["results"]:
+        print(f"(no results for '{args.query}')")
+        return
+    print(f"Results for '{args.query}' ({r.get('backend')}):")
+    for i, res in enumerate(r["results"], 1):
+        print(f"{i}. {res['title']}\n   {res['url']}")
+        if res.get("snippet"):
+            print(f"   {res['snippet']}")
+
+
 def cmd_task_new(args):
     store = _store(args)
     t = store.create_task(
@@ -1162,6 +1205,27 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--owner", help="Set the project owner")
     pp.add_argument("--goal", help="Set the project goal")
     pp.set_defaults(func=cmd_project_add)
+
+    # web access: fetch a URL as text + pluggable search (issue #19)
+    sp = sub.add_parser("web", help="Agent web access: fetch a URL or search")
+    wsub = sp.add_subparsers(dest="web_cmd", required=True)
+
+    wp = wsub.add_parser("fetch", help="Fetch a URL and return readable text")
+    wp.add_argument("url")
+    wp.add_argument("--timeout", type=float, default=12.0)
+    wp.add_argument("--max-bytes", dest="max_bytes", type=int, default=2_000_000)
+    wp.add_argument("--max-chars", dest="max_chars", type=int, default=0,
+                    help="Truncate printed text to N chars (0 = no limit)")
+    wp.add_argument("--json", action="store_true")
+    wp.set_defaults(func=cmd_web_fetch)
+
+    wp = wsub.add_parser("search", help="Web search (needs AGORA_SEARCH_KEY)")
+    wp.add_argument("query")
+    wp.add_argument("--backend", help="brave|tavily (default: env or brave)")
+    wp.add_argument("--limit", type=int, default=5)
+    wp.add_argument("--timeout", type=float, default=12.0)
+    wp.add_argument("--json", action="store_true")
+    wp.set_defaults(func=cmd_web_search)
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
