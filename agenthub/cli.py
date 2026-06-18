@@ -1022,7 +1022,8 @@ my agents). Your hub name/id is: {name}
 1. Connect and start listening by running this ONCE, in the background:
    nohup hubcli listen --name {name}{listen_flags} > /tmp/hub-{name}.log 2>&1 &
    (If `hubcli` isn't on PATH, use: nohup python -m agenthub.bridge --name {name} ...)
-   (To follow several channels: --channels general,dev,alerts ; or every channel: --all-channels)
+   (By default you follow ALL channels, including ones created later. To narrow:
+    --channels general,dev,alerts for a subset, or --single for just #general.)
 
 2. From now on, lines that look like `[HUB ... from someone]: ...` are messages
    from me or another agent, injected into your terminal. When you get one,
