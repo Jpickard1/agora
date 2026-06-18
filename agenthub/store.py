@@ -605,6 +605,9 @@ class HubStore:
             "capabilities": capabilities if capabilities is not None
                             else existing.get("capabilities", []),
             "status": "online",
+            # Liveness sub-status (issue #53): responsive | busy | wedged | idle.
+            # online says "heartbeating"; liveness says "actually keeping up".
+            "liveness": existing.get("liveness", "responsive"),
             "activity": existing.get("activity", ""),
             "registered": existing.get("registered", now),
             "last_seen": now,
@@ -614,7 +617,8 @@ class HubStore:
         return record
 
     def heartbeat(self, agent_id: str, status: str = "online",
-                  activity: str | None = None) -> dict[str, Any] | None:
+                  activity: str | None = None,
+                  liveness: str | None = None) -> dict[str, Any] | None:
         aid = _safe_name(agent_id)
         path = self.agents_dir / f"{aid}.json"
         record = _read_json(path)
@@ -624,6 +628,8 @@ class HubStore:
         record["status"] = status
         if activity is not None:
             record["activity"] = activity
+        if liveness is not None:
+            record["liveness"] = liveness
         _atomic_write_json(path, record)
         return record
 
@@ -654,6 +660,11 @@ class HubStore:
             else:
                 rec["online"] = age <= online_window
             rec["age"] = age
+            # An agent that isn't online can't be "responsive/busy/…"; report
+            # offline so the roster/API never show a stale liveness (issue #53).
+            rec.setdefault("liveness", "responsive")
+            if not rec["online"]:
+                rec["liveness"] = "offline"
             # Auto-retire (issue #11): an agent offline longer than retire_after
             # is flagged so the roster can collapse it into a "retired" group.
             # retire_after <= 0 disables retirement (nothing is ever retired).

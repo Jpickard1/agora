@@ -283,12 +283,15 @@ def cmd_agents(args):
     if not agents:
         print("(no agents registered)")
         return
-    print(f"{'STATUS':8} {'ID':40} {'HOST':16} {'LAST SEEN':10} CAPABILITIES")
+    print(f"{'STATUS':8} {'LIVENESS':11} {'ID':40} {'HOST':16} {'LAST SEEN':10} CAPABILITIES")
     for a in agents:
         dot = "🟢 online" if a.get("online") else "⚪ offline"
+        live = a.get("liveness", "")
+        # 'wedged' is the one to act on (online but stuck) — flag it.
+        live_disp = "⚠ wedged" if live == "wedged" else (live if a.get("online") else "")
         last = f"{int(a.get('age', 0))}s ago"
         caps = ",".join(a.get("capabilities", []))
-        print(f"{dot:8} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
+        print(f"{dot:8} {live_disp:11} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
 
 
 def cmd_graph(args):

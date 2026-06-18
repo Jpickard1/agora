@@ -77,6 +77,9 @@ html, body { height: 100%; overflow: hidden; }
 .status-badge.st-working { background: rgba(250,166,26,.20); color: var(--human); }
 .status-badge.st-waiting { background: rgba(88,101,242,.22); color: #97a5ff; }
 .status-badge.st-offline { background: var(--bg3); color: var(--muted); }
+/* liveness sub-status (#53): 'wedged' = online but stuck — make it loud */
+.status-badge.st-wedged { background: rgba(231,76,60,.85); color: #fff; }
+.live-sub { margin-left: 6px; flex: none; font-size: 9.5px; color: var(--muted); opacity: .8; text-transform: lowercase; }
 
 /* ---------- main ---------- */
 .topbar { padding: 14px 18px; border-bottom: 1px solid var(--border); }
