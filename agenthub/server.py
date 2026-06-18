@@ -491,9 +491,12 @@ def create_app(root: str | Path) -> FastAPI:
         if existing and (time.time() - existing.get("last_seen", 0)) <= 30 \
                 and existing.get("status") != "offline":
             raise HTTPException(409, f"an agent named '{name}' is already online")
+        # Channel selection (issue #81): "all" (default), or a list of channel
+        # names the new agent's bridge should follow.
+        channels = payload.get("channels")
         try:
             plan = run_spawn(name, path, machine, session, tasks,
-                             hub_root=str(store.root))
+                             hub_root=str(store.root), channels=channels)
         except ValueError as e:
             raise HTTPException(400, str(e))
         except Exception as e:

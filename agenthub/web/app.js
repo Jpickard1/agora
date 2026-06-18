@@ -1195,9 +1195,19 @@ $("#add-channel").onclick = async () => {
 const spawnModal = $("#spawn-modal");
 function openSpawn() {
   $("#spawn-err").textContent = "";
+  // channel multi-select (issue #81): default "all"; list populated from channels
+  $("#spawn-chan-mode").value = "all";
+  const list = $("#spawn-chan-list");
+  list.classList.add("hidden");
+  list.innerHTML = (state.channels || []).map((c) =>
+    `<label class="spawn-chan"><input type="checkbox" value="${esc(c.name)}" /> #${esc(c.name)}</label>`
+  ).join("") || '<span class="modal-hint">no channels yet — new agent will follow all</span>';
   spawnModal.classList.remove("hidden");
   $("#spawn-name").focus();
 }
+$("#spawn-chan-mode").onchange = () => {
+  $("#spawn-chan-list").classList.toggle("hidden", $("#spawn-chan-mode").value !== "some");
+};
 function closeSpawn() { spawnModal.classList.add("hidden"); }
 
 $("#add-agent").onclick = openSpawn;
@@ -1214,12 +1224,18 @@ $("#spawn-go").onclick = async () => {
   const err = $("#spawn-err");
   err.textContent = "";
   if (!name || !path) { err.textContent = "Agent name and creation path are required."; return; }
+  // resolve channel selection (issue #81): "all", or the ticked channels
+  let channels = "all";
+  if ($("#spawn-chan-mode").value === "some") {
+    channels = [...document.querySelectorAll("#spawn-chan-list input:checked")].map((i) => i.value);
+    if (!channels.length) channels = "all";   // none ticked -> sensible default
+  }
   const go = $("#spawn-go");
   go.disabled = true;
   go.textContent = "Creating…";
   try {
     await api("/api/agents/spawn", { method: "POST",
-      body: JSON.stringify({ name, path, tasks, machine, session }) });
+      body: JSON.stringify({ name, path, tasks, machine, session, channels }) });
     ["#spawn-name", "#spawn-path", "#spawn-tasks", "#spawn-machine", "#spawn-session"]
       .forEach((s) => { $(s).value = ""; });
     closeSpawn();
