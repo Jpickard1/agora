@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
 import urllib.request
 
 from .config import resolve_root
+from .ghsync import GitHubSyncer
 from .store import HubStore
 
 PYBIN = sys.executable
@@ -63,11 +65,29 @@ def main(argv=None):
     ap.add_argument("--tick-interval", type=float, default=180.0, help="manager issue-check cadence (s)")
     ap.add_argument("--stale-after", type=float, default=300.0,
                     help="flag a task stale if its owner has been offline this long (s)")
+    ap.add_argument("--gh-sync", dest="gh_sync", action="store_true", default=True,
+                    help="mirror task status changes to linked GitHub issues (default on)")
+    ap.add_argument("--no-gh-sync", dest="gh_sync", action="store_false",
+                    help="disable the GitHub issue syncer")
+    ap.add_argument("--gh-sync-dry-run", dest="gh_dry_run", action="store_true",
+                    help="plan GitHub sync actions but don't run gh (for testing)")
     args = ap.parse_args(argv)
 
     root = str(resolve_root(args.root))
     store = HubStore(root)
     store.init()
+
+    # GitHub <-> task syncer (issue #9): comments linked issues on status change
+    # and closes them on done. Disabled automatically if `gh` isn't installed; a
+    # task with no/invalid ref is a silent no-op. Env override: AGORA_GH_SYNC=0.
+    gh_enabled = args.gh_sync and os.environ.get("AGORA_GH_SYNC", "1") != "0"
+    if gh_enabled and not args.gh_dry_run and not shutil.which("gh"):
+        print("[supervisor] gh not found → GitHub sync disabled", flush=True)
+        gh_enabled = False
+    syncer = GitHubSyncer(store, os.path.join(root, "ghsync_state.json"),
+                          enabled=gh_enabled, dry_run=args.gh_dry_run)
+    print(f"[supervisor] github sync: {'on' if gh_enabled else 'off'}"
+          f"{' (dry-run)' if args.gh_dry_run else ''}", flush=True)
 
     serve_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli serve "
                  f"--host 127.0.0.1 --port {args.port} > {root}/server.log 2>&1")
@@ -116,6 +136,12 @@ def main(argv=None):
                         author_kind="system", host="supervisor")
                     print(f"[supervisor] flagged stale task {t['id']}", flush=True)
             flagged_stale = stale_ids  # forget tasks that recovered/were reassigned
+
+            # GitHub <-> task sync (issue #9): push any new status transitions to
+            # the linked issues (idempotent; no-op for tasks without a ref).
+            synced = syncer.tick()
+            for tid in synced:
+                print(f"[supervisor] synced task {tid} to GitHub", flush=True)
         except Exception as e:
             print(f"[supervisor] error: {e}", flush=True)
         time.sleep(args.watch_interval)
