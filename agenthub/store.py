@@ -776,5 +776,5 @@ class HubStore:
             },
             "agents": per_agent,
             "host": self._host_metrics(),
-            "token_tracking": "follow-up: agents report usage via a bridge hook",
+            "token_tracking": "token usage: follow-up — agents report per-turn tokens via a bridge hook",
         }
