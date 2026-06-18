@@ -19,6 +19,7 @@ const state = {
   channels: [],
   agents: [],
   tasks: [],        // durable task-board state (live via SSE)
+  locks: [],        // advisory locks (live via SSE)
   usage: null,      // utilization snapshot for the usage panel
   messages: [],     // currently displayed
   seenIds: new Set(),
@@ -85,6 +86,7 @@ async function start() {
   $("#app").classList.remove("hidden");
   await refreshChannels();
   await refreshAgents();
+  await refreshLocks();
   await selectView({ type: "channel", id: "general" });
   openStream();
 }
@@ -136,7 +138,49 @@ function handleEvent(data) {
       if (state.view.type === "taskboard") renderTaskBoard();
     }
     refreshUsage();
+  } else if (data.type === "locks") {
+    state.locks = data.locks;
+    renderLocks();
   }
+}
+
+/* ---------------- advisory locks (issue #10) ---------------- */
+function renderLocks() {
+  const ul = $("#lock-list");
+  if (!ul) return;
+  const locks = state.locks || [];
+  const cnt = $("#lock-count");
+  if (cnt) cnt.textContent = locks.length ? String(locks.length) : "";
+  ul.innerHTML = "";
+  if (!locks.length) {
+    ul.innerHTML = `<li class="empty" style="margin:6px 2px">no active locks</li>`;
+    return;
+  }
+  locks.forEach((lk) => {
+    const li = document.createElement("li");
+    li.className = "lock" + (lk.expired ? " expired" : "");
+    li.innerHTML = `
+      <div class="lk-row">
+        <span class="lk-res" title="${esc(lk.resource)}">🔒 ${esc(lk.resource)}</span>
+        <button class="lk-rel" title="release this lock">✕</button>
+      </div>
+      <div class="lk-meta">@${esc(lk.owner)} · ${rel(lk.age)}${lk.expired ? " · ⚠️ owner offline" : ""}</div>
+      ${lk.note ? `<div class="lk-note">${esc(lk.note)}</div>` : ""}`;
+    li.querySelector(".lk-rel").onclick = async () => {
+      if (!confirm(`Release the lock on ${lk.resource}?`)) return;
+      try {
+        await api("/api/locks/release", { method: "POST",
+          body: JSON.stringify({ resource: lk.resource, owner: lk.owner, force: true }) });
+      } catch (_) { /* ignore */ }
+      refreshLocks();
+    };
+    ul.appendChild(li);
+  });
+}
+
+async function refreshLocks() {
+  try { state.locks = await api("/api/locks"); } catch (_) { return; }
+  renderLocks();
 }
 
 /* ---------------- sidebar ---------------- */
