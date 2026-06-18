@@ -328,6 +328,24 @@ def _safe_agent(name):
     return _safe_name(name)
 
 
+def cmd_react(args):
+    """Add/toggle/remove an emoji reaction on a message (issue #61)."""
+    store = _store(args)
+    author = args.author or "cli"
+    if args.remove:
+        r = store.remove_reaction(args.msg_id, args.emoji, author)
+    else:
+        r = store.toggle_reaction(args.msg_id, args.emoji, author, author_name=author)
+    if args.json:
+        print(json.dumps(r, indent=2))
+        return
+    if not r:
+        print("(no reactions)")
+        return
+    for e, info in r.items():
+        print(f"  {e} {info['count']}  ({', '.join(info['authors'])})")
+
+
 def cmd_graph(args):
     store = _store(args)
     g = store.comm_graph()
@@ -1228,6 +1246,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Flag a backlog if queued and nothing delivered in this many seconds")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_health)
+
+    sp = sub.add_parser("react", help="React to a message with an emoji (toggle by default)")
+    sp.add_argument("msg_id", help="Message id")
+    sp.add_argument("emoji", help="Emoji, e.g. 👍 ✅ 🎉")
+    sp.add_argument("--remove", action="store_true", help="Remove instead of toggle/add")
+    sp.add_argument("--author", help="Reacting agent id")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_react)
 
     sp = sub.add_parser("graph", help="Agent communication graph (who DMs whom)")
     sp.add_argument("--json", action="store_true")
