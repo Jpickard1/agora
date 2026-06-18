@@ -40,12 +40,49 @@ def resolve_root(explicit: str | None = None) -> Path:
     return Path(DEFAULT_ROOT).expanduser().resolve()
 
 
+def read_pointer() -> str | None:
+    """The hub root currently recorded in ~/.agent-hub-path, or None."""
+    if POINTER_FILE.exists():
+        try:
+            p = POINTER_FILE.read_text(encoding="utf-8").strip()
+            return p or None
+        except OSError:
+            return None
+    return None
+
+
 def write_pointer(root: Path) -> None:
-    """Remember the chosen hub root so future CLI calls find it automatically."""
+    """Low-level, UNCONDITIONAL write of ~/.agent-hub-path. Prefer set_pointer()
+    in user-facing flows so an existing pointer to a different hub isn't silently
+    clobbered (issue #39)."""
     try:
         POINTER_FILE.write_text(str(root), encoding="utf-8")
     except OSError:
         pass
+
+
+def set_pointer(root: Path, force: bool = False) -> tuple[str, str | None]:
+    """Safely record the hub root in ~/.agent-hub-path (issue #39).
+
+    Returns (action, previous) where action is one of:
+      "written"     — no pointer existed; we created it.
+      "unchanged"   — a pointer already pointed here; left as-is.
+      "overwritten" — a different pointer existed and force=True; replaced it.
+      "refused"     — a DIFFERENT pointer existed and force=False; left untouched
+                      so a throwaway/test root can't hijack the shared pointer.
+    """
+    target = str(Path(root).expanduser().resolve())
+    existing = read_pointer()
+    if existing is None:
+        write_pointer(target)
+        return ("written", None)
+    existing_resolved = str(Path(existing).expanduser().resolve())
+    if existing_resolved == target:
+        return ("unchanged", existing)
+    if force:
+        write_pointer(target)
+        return ("overwritten", existing)
+    return ("refused", existing)
 
 
 def resolve_token(store_token: str | None) -> str | None:
