@@ -108,8 +108,10 @@ def cmd_post(args):
     meta = {"alert": True} if getattr(args, "alert", False) else None
     m = store.post_channel(args.channel, text, author=args.id or name,
                            author_name=name, author_kind=args.kind,
-                           host=socket.gethostname().split(".")[0], meta=meta)
-    print(f"{'🚨 Alert posted' if meta else 'Posted'} to #{m.channel} ({m.id[:8]})")
+                           host=socket.gethostname().split(".")[0], meta=meta,
+                           reply_to=getattr(args, "reply_to", None))
+    reply = f" ↪reply to {args.reply_to[:8]}" if getattr(args, "reply_to", None) else ""
+    print(f"{'🚨 Alert posted' if meta else 'Posted'} to #{m.channel} ({m.id[:8]}){reply}")
 
 
 def cmd_alert(args):
@@ -1157,6 +1159,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--id", help="Author id")
     sp.add_argument("--kind", default="agent")
     sp.add_argument("--alert", action="store_true", help="High-visibility alert (white bg/black text/🚨, pinned)")
+    sp.add_argument("--reply-to", dest="reply_to", help="Parent message id (threaded reply, #64)")
     sp.set_defaults(func=cmd_post)
 
     sp = sub.add_parser("alert", help="Post a high-visibility alert (must-read; pinned + 🚨)")
