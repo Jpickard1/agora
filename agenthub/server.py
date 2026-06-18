@@ -181,6 +181,12 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_agents(online_window=window)
 
+    # -- task board: durable dispatch state for the UI -------------------
+    @app.get("/api/tasks")
+    def tasks(status: str | None = None, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.list_tasks(status=status)
+
     @app.get("/api/agents/{agent_id}/inbox")
     def agent_inbox(agent_id: str, since: float = 0.0, limit: int = 200,
                     x_hub_token: str | None = Header(default=None)):
@@ -309,6 +315,8 @@ def create_app(root: str | Path) -> FastAPI:
                         yield _sse({"type": "broadcast", "message": m})
                     # Presence snapshot.
                     yield _sse({"type": "agents", "agents": store.list_agents()})
+                    # Task-board snapshot (durable dispatch state, live).
+                    yield _sse({"type": "tasks", "tasks": store.list_tasks()})
                 except Exception as e:  # never kill the stream on a transient FS error
                     yield _sse({"type": "error", "detail": str(e)})
                 await asyncio.sleep(1.0)
