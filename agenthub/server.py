@@ -187,6 +187,12 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- system utilization / efficiency panel (issue #6) ---------------
+    @app.get("/api/usage")
+    def usage(window: float = 30.0, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.usage_stats(online_window=window)
+
     @app.get("/api/agents/{agent_id}/inbox")
     def agent_inbox(agent_id: str, since: float = 0.0, limit: int = 200,
                     x_hub_token: str | None = Header(default=None)):
