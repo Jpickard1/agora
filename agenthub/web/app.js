@@ -261,7 +261,91 @@ async function selectView(view) {
     $("#view-sub").textContent = "shared, searchable notes / links / artifacts — consult before duplicating work";
     composer.style.display = "none";
     await refreshKb();
+  } else if (view.type === "projects") {
+    $("#view-title").textContent = "📁 Projects";
+    $("#view-sub").textContent = "group tasks & channels under a goal — live progress rollup";
+    composer.style.display = "none";
+    await refreshProjects();
   }
+}
+
+/* ---------------- projects (issue #22) ---------------- */
+async function refreshProjects() {
+  if (state.view.type !== "projects") return;
+  try { state.projects_v = await api("/api/projects"); } catch (_) { state.projects_v = []; }
+  renderProjects();
+}
+
+function pjBar(pct) {
+  const cls = (pct || 0) >= 100 ? "done" : "";
+  return `<div class="pj-bar"><div class="pj-fill ${cls}" style="width:${Math.min(100, pct || 0)}%"></div></div>`;
+}
+
+function renderProjects() {
+  const box = $("#messages");
+  const projects = state.projects_v || [];
+  const cards = projects.map((p) => {
+    const pr = p.progress || {};
+    const owner = p.owner ? `<span class="pj-owner">@${esc(p.owner)}</span>` : "";
+    const ms = (p.milestones || []).map((m) =>
+      `<span class="pj-ms ${m.done ? "done" : ""}">${m.done ? "☑" : "☐"} ${esc(m.name)}</span>`).join("");
+    const chans = (p.channels || []).map((c) =>
+      `<span class="pj-chip" data-ch="${esc(c)}">#${esc(c)}</span>`).join("");
+    const tasks = (p.task_ids || []).map((t) => `<span class="pj-chip">${esc(t)}</span>`).join("");
+    return `<div class="pj-card">
+      <div class="pj-head">
+        <span class="pj-name">📁 ${esc(p.name || p.id)}</span>${owner}
+        <button class="pj-del" data-id="${esc(p.id)}" title="delete">✕</button>
+      </div>
+      ${p.goal ? `<div class="pj-goal">${esc(p.goal)}</div>` : ""}
+      ${pjBar(pr.percent)}
+      <div class="pj-stats">${pr.percent || 0}% · ${pr.done || 0}/${pr.total_tasks || 0} tasks ·
+        ${pr.milestones_done || 0}/${pr.milestones_total || 0} milestones</div>
+      ${ms ? `<div class="pj-mss">${ms}</div>` : ""}
+      ${tasks ? `<div class="pj-row"><span class="pj-lbl">tasks</span>${tasks}</div>` : ""}
+      ${chans ? `<div class="pj-row"><span class="pj-lbl">channels</span>${chans}</div>` : ""}
+    </div>`;
+  }).join("") || `<div class="empty">No projects yet.</div>`;
+
+  box.innerHTML = `
+    <div class="pj">
+      <div class="pj-top"><button id="pj-add-btn">＋ New project</button></div>
+      <div id="pj-form" class="kb-form hidden">
+        <input id="pj-f-name" type="text" placeholder="Project name" />
+        <input id="pj-f-goal" type="text" placeholder="Goal" />
+        <input id="pj-f-owner" type="text" placeholder="Owner (agent id)" />
+        <div class="kb-form-actions">
+          <button id="pj-f-cancel" class="btn-secondary">Cancel</button>
+          <button id="pj-f-save">Create project</button>
+        </div>
+        <div id="pj-f-err" class="err"></div>
+      </div>
+      <div class="pj-list">${cards}</div>
+    </div>`;
+
+  $("#pj-add-btn").onclick = () => $("#pj-form").classList.toggle("hidden");
+  $("#pj-f-cancel").onclick = () => $("#pj-form").classList.add("hidden");
+  $("#pj-f-save").onclick = async () => {
+    const name = $("#pj-f-name").value.trim();
+    const err = $("#pj-f-err");
+    if (!name) { err.textContent = "Name is required."; return; }
+    const body = JSON.stringify({
+      id: name, name, goal: $("#pj-f-goal").value.trim(),
+      owner: $("#pj-f-owner").value.trim(), author: state.name,
+    });
+    try { await api("/api/projects", { method: "POST", body }); refreshProjects(); }
+    catch (e) { err.textContent = "Could not create: " + e.message; }
+  };
+  document.querySelectorAll(".pj-del").forEach((el) => {
+    el.onclick = async () => {
+      if (!confirm("Delete this project? (its tasks/channels are not deleted)")) return;
+      try { await api("/api/projects/" + encodeURIComponent(el.dataset.id), { method: "DELETE" }); } catch (_) {}
+      refreshProjects();
+    };
+  });
+  document.querySelectorAll(".pj-chip[data-ch]").forEach((el) => {
+    el.onclick = () => selectView({ type: "channel", id: el.dataset.ch });
+  });
 }
 
 /* ---------------- knowledge base (issue #25) ---------------- */
@@ -630,6 +714,7 @@ $("#file-input").addEventListener("change", async (e) => {
   }
 });
 
+$("#nav-projects").onclick = () => selectView({ type: "projects" });
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-kb").onclick = () => selectView({ type: "kb" });
 $("#nav-usage").onclick = () => selectView({ type: "usage" });

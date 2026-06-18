@@ -517,6 +517,95 @@ def cmd_kb_rm(args):
         sys.exit(2)
 
 
+def _print_project(p, verbose=False):
+    pr = p.get("progress") or {}
+    bar_total = 12
+    filled = round(bar_total * pr.get("percent", 0) / 100)
+    bar = "█" * filled + "░" * (bar_total - filled)
+    owner = f"  owner=@{p['owner']}" if p.get("owner") else ""
+    print(f"📁 {p['id']}  {p.get('name','')}{owner}")
+    print(f"   [{bar}] {pr.get('percent',0)}%  "
+          f"({pr.get('done',0)}/{pr.get('total_tasks',0)} tasks done, "
+          f"{pr.get('milestones_done',0)}/{pr.get('milestones_total',0)} milestones)")
+    if p.get("goal"):
+        print(f"   goal: {p['goal']}")
+    if verbose:
+        if p.get("milestones"):
+            print("   milestones:")
+            for m in p["milestones"]:
+                print(f"     [{'x' if m.get('done') else ' '}] {m['name']}")
+        if p.get("task_ids"):
+            print(f"   tasks: {', '.join(p['task_ids'])}")
+        if p.get("channels"):
+            print(f"   channels: {', '.join('#' + c for c in p['channels'])}")
+        bys = pr.get("by_status") or {}
+        if bys:
+            print("   rollup: " + ", ".join(f"{k}={v}" for k, v in bys.items()))
+
+
+def cmd_project_new(args):
+    store = _store(args)
+    p = store.project_new(args.id, name=args.name or args.id, goal=args.goal or "",
+                          owner=args.owner or "", created_by=args.author or "cli")
+    print(f"✓ Created project: {p['id']}")
+    _print_project(store.project_get(p["id"]))
+
+
+def cmd_project_list(args):
+    store = _store(args)
+    projects = store.project_list()
+    if args.json:
+        print(json.dumps(projects, indent=2))
+        return
+    if not projects:
+        print("(no projects yet)")
+        return
+    for p in projects:
+        _print_project(p)
+
+
+def cmd_project_show(args):
+    store = _store(args)
+    p = store.project_get(args.id)
+    if p is None:
+        print(f"✗ No such project: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    if args.json:
+        print(json.dumps(p, indent=2))
+        return
+    _print_project(p, verbose=True)
+
+
+def cmd_project_add(args):
+    store = _store(args)
+    if store.project_get(args.id, rollup=False) is None:
+        print(f"✗ No such project: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    did = []
+    if args.task:
+        store.project_add_task(args.id, args.task)
+        did.append(f"task {args.task}")
+    if args.channel:
+        store.project_add_channel(args.id, args.channel)
+        did.append(f"#{args.channel}")
+    if args.milestone:
+        store.project_add_milestone(args.id, args.milestone)
+        if args.done:
+            store.project_set_milestone(args.id, args.milestone, True)
+            did.append(f"milestone '{args.milestone}' (done)")
+        else:
+            did.append(f"milestone '{args.milestone}'")
+    if args.owner is not None or args.goal is not None:
+        store.project_update(args.id, owner=args.owner, goal=args.goal)
+        did.append("metadata")
+    if not did:
+        print("Nothing to add (use --task/--channel/--milestone/--owner/--goal).",
+              file=sys.stderr)
+        sys.exit(1)
+    print(f"✓ Updated {args.id}: " + ", ".join(did))
+    _print_project(store.project_get(args.id), verbose=True)
+
+
 def cmd_task_new(args):
     store = _store(args)
     t = store.create_task(
@@ -1042,6 +1131,37 @@ def build_parser() -> argparse.ArgumentParser:
     kp = ksub.add_parser("rm", help="Delete a KB entry")
     kp.add_argument("id_arg", metavar="id", help="Entry id")
     kp.set_defaults(func=cmd_kb_rm)
+
+    # projects: group tasks/channels under a goal with milestones + rollup (#22)
+    sp = sub.add_parser("project", help="Projects: group tasks/channels under a goal")
+    psub = sp.add_subparsers(dest="project_cmd", required=True)
+
+    pp = psub.add_parser("new", help="Create a project")
+    pp.add_argument("id", help="Project id (slug)")
+    pp.add_argument("--name")
+    pp.add_argument("--goal")
+    pp.add_argument("--owner")
+    pp.add_argument("--author", help="Creator")
+    pp.set_defaults(func=cmd_project_new)
+
+    pp = psub.add_parser("list", help="List projects + progress")
+    pp.add_argument("--json", action="store_true")
+    pp.set_defaults(func=cmd_project_list)
+
+    pp = psub.add_parser("show", help="Show one project (milestones, tasks, rollup)")
+    pp.add_argument("id")
+    pp.add_argument("--json", action="store_true")
+    pp.set_defaults(func=cmd_project_show)
+
+    pp = psub.add_parser("add", help="Attach a task/channel/milestone or set owner/goal")
+    pp.add_argument("id")
+    pp.add_argument("--task", help="Attach a task id")
+    pp.add_argument("--channel", help="Attach a channel")
+    pp.add_argument("--milestone", help="Add a milestone (with --done to mark complete)")
+    pp.add_argument("--done", action="store_true", help="Mark the --milestone complete")
+    pp.add_argument("--owner", help="Set the project owner")
+    pp.add_argument("--goal", help="Set the project goal")
+    pp.set_defaults(func=cmd_project_add)
 
     sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
