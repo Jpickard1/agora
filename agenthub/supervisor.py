@@ -54,6 +54,39 @@ def _agent_online(store: HubStore, agent_id: str, window: float = 30.0) -> bool:
     return (time.time() - rec.get("last_seen", 0)) <= window and rec.get("status") != "offline"
 
 
+# -- testable loop units (issue #3) ---------------------------------------
+# The decision logic of the watch loop is factored out so it can be unit-tested
+# with mocks (no real tmux / network / sleeps). main() just wires them together.
+
+def should_tick(now: float, last_tick: float, interval: float) -> bool:
+    """True if it's time to poke the manager again."""
+    return (now - last_tick) >= interval
+
+
+def ensure_server(port, serve_cmd, *, server_ok=_server_ok,
+                  tmux_start=_tmux_start) -> bool:
+    """Restart the web server (in tmux) if its health check fails. Returns True
+    if a restart was issued. server_ok/tmux_start are injectable for tests."""
+    if server_ok(port):
+        return False
+    print("[supervisor] server not responding → restarting", flush=True)
+    tmux_start("agora-server", serve_cmd)
+    return True
+
+
+def ensure_manager_bridge(store, manager, pane, bridge_cmd, *,
+                          agent_online=_agent_online, tmux_start=_tmux_start) -> bool:
+    """Restart the manager's bridge if the manager has dropped off the roster.
+    No-op when there's no pane to restart into. Returns True if restarted."""
+    if not pane:
+        return False
+    if agent_online(store, manager):
+        return False
+    print(f"[supervisor] manager '{manager}' offline → restarting its bridge", flush=True)
+    tmux_start("agora-manager-bridge", bridge_cmd)
+    return True
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="agora-supervisor")
     ap.add_argument("--manager", default="manager", help="Manager agent id to keep alive + tick")
@@ -101,17 +134,13 @@ def main(argv=None):
     flagged_stale: set[str] = set()  # tasks we've already announced as stale
     while True:
         try:
-            if not _server_ok(args.port):
-                print("[supervisor] server not responding → restarting", flush=True)
-                _tmux_start("agora-server", serve_cmd)
+            if ensure_server(args.port, serve_cmd):
                 time.sleep(3)
 
-            if args.manager_pane and not _agent_online(store, args.manager):
-                print(f"[supervisor] manager '{args.manager}' offline → restarting its bridge", flush=True)
-                _tmux_start("agora-manager-bridge", bridge_cmd)
+            ensure_manager_bridge(store, args.manager, args.manager_pane, bridge_cmd)
 
             now = time.time()
-            if now - last_tick >= args.tick_interval:
+            if should_tick(now, last_tick, args.tick_interval):
                 last_tick = now
                 store.post_inbox(
                     args.manager,
