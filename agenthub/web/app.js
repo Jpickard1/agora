@@ -20,6 +20,7 @@ const state = {
   agents: [],
   tasks: [],        // durable task-board state (live via SSE)
   mentions: [],     // messages mentioning the viewer (issue #52)
+  searchResults: [], // last full-text search hits (issue #51)
   locks: [],        // advisory locks (live via SSE)
   usage: null,      // utilization snapshot for the usage panel
   messages: [],     // currently displayed
@@ -344,6 +345,61 @@ async function selectView(view) {
     $("#view-sub").textContent = `messages that mention @${state.name} or @all`;
     composer.style.display = "none";
     await refreshMentions(true);
+  } else if (view.type === "search") {
+    $("#view-title").textContent = "🔎 Search";
+    $("#view-sub").textContent = `results for "${view.query}"`;
+    composer.style.display = "none";
+    renderSearchResults();
+  }
+}
+
+/* ---------------- full-text search (issue #51) ---------------- */
+async function runSearch(query) {
+  query = (query || "").trim();
+  if (!query) return;
+  try {
+    state.searchResults = await api(`/api/search?q=${encodeURIComponent(query)}&limit=100`);
+  } catch (_) { state.searchResults = []; }
+  state.searchQuery = query;
+  selectView({ type: "search", query });
+}
+
+function renderSearchResults() {
+  const box = $("#messages");
+  const hits = state.searchResults || [];
+  if (!hits.length) {
+    box.innerHTML = `<div class="empty">No matches for "${esc(state.searchQuery || "")}".</div>`;
+    return;
+  }
+  const icon = { channel: "#", inbox: "→", broadcast: "📢", task: "📋" };
+  box.innerHTML = `<div class="search-results">`
+    + `<div class="usect-head">${hits.length} result(s)</div>`
+    + hits.map((h, i) => {
+        const where = `${icon[h.source] || ""}${esc(h.where)}`;
+        return `<div class="sr" data-i="${i}">
+          <div class="sr-head"><span class="sr-where">${where}</span>
+            <span class="author">${esc(h.author || "?")}</span>
+            <span class="time">${fmtTime(h.ts)}</span></div>
+          <div class="text">${renderMarkdown(h.snippet || h.text || "")}</div></div>`;
+      }).join("") + `</div>`;
+  document.querySelectorAll(".sr[data-i]").forEach((el) => {
+    el.onclick = () => jumpToHit(hits[+el.dataset.i]);
+  });
+}
+
+// Jump from a search result to its source view, then scroll to the exact message.
+async function jumpToHit(h) {
+  if (!h) return;
+  if (h.source === "channel") await selectView({ type: "channel", id: h.where });
+  else if (h.source === "inbox") await selectView({ type: "agent", id: h.where, name: h.where });
+  else if (h.source === "broadcast") await selectView({ type: "broadcast" });
+  else if (h.source === "task") { await selectView({ type: "taskboard" }); return; }
+  // scroll to the precise message via the shared data-msg-id anchor (#52)
+  if (h.id) {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-msg-id="${h.id}"]`);
+      if (el) { el.scrollIntoView({ block: "center" }); el.classList.add("flash"); }
+    }, 120);
   }
 }
 
@@ -942,6 +998,11 @@ $("#file-input").addEventListener("change", async (e) => {
 });
 
 $("#nav-mentions").onclick = () => selectView({ type: "mentions" });
+const _searchForm = $("#search-form");
+if (_searchForm) _searchForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  runSearch($("#global-search").value);
+});
 $("#nav-projects").onclick = () => selectView({ type: "projects" });
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
 $("#nav-kb").onclick = () => selectView({ type: "kb" });

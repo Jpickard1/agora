@@ -46,8 +46,13 @@
     <!-- Main message pane -->
     <main class="main">
       <header class="topbar">
-        <div id="view-title"># general</div>
-        <div id="view-sub" class="sub"></div>
+        <div class="topbar-titles">
+          <div id="view-title"># general</div>
+          <div id="view-sub" class="sub"></div>
+        </div>
+        <form id="search-form" class="search-form">
+          <input id="global-search" type="search" placeholder="🔎 Search the hub…" autocomplete="off" />
+        </form>
       </header>
       <div id="messages" class="messages"></div>
       <form id="composer" class="composer">
