@@ -89,6 +89,57 @@ def cmd_init(args):
     print(f"  export AGENT_HUB_TOKEN={cfg['token']}")
 
 
+# The shared hub everyone on this deployment joins (public channels live here).
+# `hubcli join --shared` (no value) uses this; pass --shared <dir> for another.
+DEFAULT_SHARED_ROOT = "/ewsc/ewsc/agents/agora"
+
+
+def join_hub(root, *, shared_root: str | None, token: str | None = None) -> dict:
+    """Create or confirm YOUR OWN hub at `root`, wired to `shared_root` for the
+    PUBLIC channels (#89). Idempotent — safe to re-run. Pure setup (no serving);
+    returns {root, token, shared_root, existed}."""
+    store = HubStore(root)
+    existed = store.config_path.exists()
+    cfg = store.init(token=token, shared_root=shared_root)
+    return {"root": str(root), "token": cfg["token"],
+            "shared_root": cfg.get("shared_root"), "existed": existed}
+
+
+def cmd_join(args):
+    """One-command onboarding for a NEW user (#89): stand up YOUR OWN hub on YOUR
+    OWN private root, joined to the shared hub for public channels, then serve.
+    Every user runs their own server — never reuse another user's token/root."""
+    root = resolve_root(args.root)
+    info = join_hub(root, shared_root=args.shared, token=args.token)
+    print(f"✓ {'re-joined (hub already existed)' if info['existed'] else 'joined'}"
+          f" — your OWN hub is ready:")
+    print(f"   private root (yours):  {info['root']}")
+    if info["shared_root"]:
+        print(f"   shared store (public): {info['shared_root']}")
+        print( "   → you see + post the PUBLIC channels; your private channels stay yours,")
+        print( "     and you do NOT see other users' private channels/agents/tasks.")
+    else:
+        print( "   (no shared store — single-user; pass --shared <dir> to join the shared hub)")
+    print(f"   your token:            {info['token']}")
+    print( "   This hub + token are YOURS — never reuse another user's. (See docs/multi-user.md.)")
+
+    if not args.no_pointer:
+        action, previous = set_pointer(root, force=args.set_default)
+        if action == "refused":
+            print(f"\n⚠️  ~/.agent-hub-path already points to a DIFFERENT hub ({previous});")
+            print(f"    left it untouched. Use this hub via: AGENT_HUB_ROOT={root} hubcli ...")
+
+    print(f"\n   export AGENT_HUB_ROOT={info['root']}")
+    print(f"   export AGENT_HUB_TOKEN={info['token']}")
+
+    if args.no_serve:
+        print(f"\nStart your server when ready:  hubcli serve --port {args.port}")
+        return
+    print(f"\nStarting YOUR server on http://{args.host}:{args.port}/  (Ctrl-C to stop)…")
+    from .server import run_server
+    run_server(root=root, host=args.host, port=args.port)
+
+
 def cmd_register(args):
     store = _store(args)
     aid = args.id or default_agent_id(args.name)
@@ -1291,6 +1342,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-pointer", dest="no_pointer", action="store_true",
                     help="Don't touch ~/.agent-hub-path at all (safe for tests)")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("join",
+                        help="One-command onboarding: stand up YOUR OWN hub joined "
+                             "to the shared hub, then serve (#89)")
+    sp.add_argument("--shared", nargs="?", const=DEFAULT_SHARED_ROOT, default=None,
+                    help=f"Shared store for PUBLIC channels (bare --shared = {DEFAULT_SHARED_ROOT})")
+    sp.add_argument("--token", help="Your hub token (generated if omitted — yours, not shared)")
+    sp.add_argument("--port", type=int, default=8910, help="Port for YOUR server (default 8910)")
+    sp.add_argument("--host", default="127.0.0.1")
+    sp.add_argument("--no-serve", action="store_true",
+                    help="Set up the hub but don't start the server")
+    sp.add_argument("--no-pointer", action="store_true", help="Don't touch ~/.agent-hub-path")
+    sp.add_argument("--set-default", dest="set_default", action="store_true",
+                    help="Force ~/.agent-hub-path to this hub")
+    sp.set_defaults(func=cmd_join)
 
     sp = sub.add_parser("register", help="Register/announce an agent")
     sp.add_argument("--name", required=True)
