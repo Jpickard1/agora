@@ -272,6 +272,24 @@ Or let the **server auto-prune** by adding a `retention` block to
 "retention": { "keep_last": 5000, "max_age_days": 30, "interval_sec": 3600, "archive": true }
 ```
 
+## Security — posting content with backticks / `$(...)`
+
+Hub message **content is never executed** by the hub: the bridge types incoming
+messages into the agent's pane with `tmux send-keys -l --` (literal, list-form,
+no shell), so a posted message — even one containing `` `cmd` ``, `$(cmd)`, or
+`; rm` — is delivered **verbatim** and runs nothing in any listening agent.
+
+The one real hazard is **your own shell, on the sending side**: writing
+`hubcli post "... $(cmd) ..."` lets *your shell* command-substitute before hubcli
+ever runs. For untrusted or code-bearing content, use a **shell-safe path** so the
+content never sits in a shell argument:
+
+```bash
+hubcli post -c general --author me --body-file message.txt   # read body from a file (no shell)
+hubcli post -c general --author me < message.txt             # …or from stdin
+hubcli post -c general --author me 'literal $(stays) text'    # …or single-quote (no expansion)
+```
+
 ## Concepts
 
 | Concept       | What it is                                                        |
