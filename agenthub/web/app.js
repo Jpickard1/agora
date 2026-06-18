@@ -19,6 +19,7 @@ const state = {
   channels: [],
   agents: [],
   tasks: [],        // durable task-board state (live via SSE)
+  usage: null,      // utilization snapshot for the usage panel
   messages: [],     // currently displayed
   seenIds: new Set(),
   dismissed: new Set(),  // alert message ids the user dismissed
@@ -111,6 +112,7 @@ function handleEvent(data) {
   if (data.type === "agents") {
     state.agents = data.agents;
     renderAgents();
+    refreshUsage();
   } else if (data.type === "message") {
     const m = data.message;
     if (state.view.type === "channel" && m.channel === state.view.id) appendMessage(m);
@@ -131,6 +133,7 @@ function handleEvent(data) {
       state._tasksSig = sig;
       if (state.view.type === "taskboard") renderTaskBoard();
     }
+    refreshUsage();
   }
 }
 
@@ -247,7 +250,75 @@ async function selectView(view) {
     composer.style.display = "none";
     state.tasks = await api(`/api/tasks`);
     renderTaskBoard();
+  } else if (view.type === "usage") {
+    $("#view-title").textContent = "📊 Usage & efficiency";
+    $("#view-sub").textContent = "system utilization — per-agent activity + host load";
+    composer.style.display = "none";
+    state.usage = await api(`/api/usage`);
+    renderUsage();
   }
+}
+
+// Live utilization panel: totals + host load gauges + per-agent activity table.
+async function refreshUsage() {
+  if (state.view.type !== "usage") return;
+  try { state.usage = await api(`/api/usage`); } catch (_) { return; }
+  renderUsage();
+}
+
+function gauge(label, pct, detail) {
+  if (pct == null) return "";
+  const cls = pct >= 90 ? "hot" : pct >= 70 ? "warm" : "";
+  return `<div class="ug">
+    <div class="ug-head"><span>${esc(label)}</span><span>${pct}%${detail ? " · " + esc(detail) : ""}</span></div>
+    <div class="ug-bar"><div class="ug-fill ${cls}" style="width:${Math.min(100, pct)}%"></div></div>
+  </div>`;
+}
+
+function renderUsage() {
+  const box = $("#messages");
+  const u = state.usage || { totals: {}, agents: [], host: {} };
+  const t = u.totals || {};
+  const h = u.host || {};
+  const stat = (val, lab) =>
+    `<div class="ustat"><div class="ustat-n">${val}</div><div class="ustat-l">${esc(lab)}</div></div>`;
+  const stats = [
+    stat(`${t.online ?? 0}/${t.agents ?? 0}`, "agents online"),
+    stat(t.messages ?? 0, "messages"),
+    stat(t.tasks ?? 0, "tasks"),
+    stat(t.tasks_done ?? 0, "tasks done"),
+    stat(t.tasks_per_agent ?? 0, "tasks / agent"),
+  ].join("");
+  const gauges =
+    gauge("CPU", h.cpu_percent, null) +
+    gauge("Memory", h.mem_percent,
+          h.mem_used_gb != null ? `${h.mem_used_gb}/${h.mem_total_gb} GB` : null) +
+    (h.load1 != null ? `<div class="ug"><div class="ug-head"><span>Load (1m)</span><span>${h.load1}</span></div></div>` : "");
+  const rows = (u.agents || []).map((a) => {
+    const dot = a.online ? "online" : "";
+    const act = a.activity ? ` <span class="ut-act">▸ ${esc(a.activity)}</span>` : "";
+    return `<tr>
+      <td><span class="pdot ${dot}"></span>${esc(a.name)}${act}</td>
+      <td class="num">${a.messages}</td>
+      <td class="num">${a.tasks_total}</td>
+      <td class="num">${a.tasks_done}</td>
+      <td class="num">${a.tasks_running}</td>
+      <td>${esc(a.host || "?")}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="6" class="tb-empty">no agents</td></tr>`;
+  box.innerHTML = `
+    <div class="usage">
+      <div class="ustat-row">${stats}</div>
+      <div class="usect-head">🖥 Host — ${esc(h.host || "?")}</div>
+      <div class="ugauges">${gauges || '<div class="tb-empty">host metrics unavailable</div>'}</div>
+      <div class="usect-head">Per-agent activity</div>
+      <table class="utable">
+        <thead><tr><th>Agent</th><th class="num">Msgs</th><th class="num">Tasks</th>
+          <th class="num">Done</th><th class="num">Running</th><th>Host</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="unote">${esc(u.token_tracking || "")}</div>
+    </div>`;
 }
 
 // Live task board: columns by status, each card shows id / title / assignee.
@@ -441,6 +512,7 @@ $("#file-input").addEventListener("change", async (e) => {
 });
 
 $("#nav-taskboard").onclick = () => selectView({ type: "taskboard" });
+$("#nav-usage").onclick = () => selectView({ type: "usage" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 

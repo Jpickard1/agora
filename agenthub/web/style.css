@@ -202,3 +202,29 @@ html, body { height: 100%; overflow: hidden; }
   display: flex; align-items: center; gap: 8px; font-weight: 600; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
 .alert-banner .alert-tag { background: #000; color: #fff; font-weight: 800; font-size: 11px; padding: 1px 7px; border-radius: 4px; }
 .alert-banner .ab-dismiss { margin-left: auto; background: none; border: 0; color: #000; cursor: pointer; font-size: 16px; }
+
+/* ---- usage & efficiency panel (issue #6) ---- */
+.usage { padding: 16px 20px; overflow-y: auto; height: 100%; }
+.ustat-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.ustat { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 18px; min-width: 110px; flex: 1 0 auto; }
+.ustat-n { font-size: 22px; font-weight: 700; color: var(--text); }
+.ustat-l { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-top: 2px; }
+.usect-head { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin: 18px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+.ugauges { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
+.ug-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+.ug-bar { height: 8px; background: var(--bg3); border-radius: 5px; overflow: hidden; }
+.ug-fill { height: 100%; background: var(--accent2); border-radius: 5px; transition: width .4s ease; }
+.ug-fill.warm { background: var(--human); }
+.ug-fill.hot { background: var(--danger); }
+.utable { width: 100%; border-collapse: collapse; font-size: 13px; }
+.utable th { text-align: left; color: var(--muted); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .03em; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.utable td { padding: 7px 10px; border-bottom: 1px solid var(--bg2); }
+.utable td.num, .utable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.utable .pdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--muted); margin-right: 7px; }
+.utable .pdot.online { background: var(--accent2); }
+.utable .ut-act { color: var(--human); font-size: 11px; }
+.unote { color: var(--muted); font-size: 11px; margin-top: 14px; font-style: italic; }
