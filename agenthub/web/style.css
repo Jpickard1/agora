@@ -145,7 +145,9 @@ html, body { height: 100%; overflow: hidden; }
 .tb-card.tb-done { border-left-color: var(--accent2); }
 .tb-card.tb-open { border-left-color: var(--accent); }
 .tb-card.tb-failed, .tb-card.tb-cancelled { border-left-color: var(--danger); }
-.tb-title { font-weight: 600; color: var(--text); margin-bottom: 4px; word-break: break-word; }
+.tb-title { font-weight: 600; color: var(--text); margin-bottom: 4px; word-break: break-word; display: block; }
+a.tb-title-link { text-decoration: none; cursor: pointer; }
+a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .tb-meta { font-size: 11px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .tb-id { font-family: ui-monospace, monospace; color: var(--text); }
 .tb-ref { background: var(--bg3); border-radius: 4px; padding: 0 5px; }

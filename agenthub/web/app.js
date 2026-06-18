@@ -349,11 +349,23 @@ function renderTaskBoard() {
   if (now) now.scrollLeft = sx;
 }
 
+// Parse a task ref like "owner/repo#123" into its GitHub issue URL, else "".
+function issueUrl(ref) {
+  const m = /^([^/\s]+)\/([^#\s]+)#(\d+)$/.exec((ref || "").trim());
+  return m ? `https://github.com/${m[1]}/${m[2]}/issues/${m[3]}` : "";
+}
+
 function taskCard(t) {
   const who = t.claimed_by ? `🤖 ${esc(t.claimed_by)}` : "unassigned";
   const ref = t.ref ? `<span class="tb-ref">${esc(t.ref)}</span>` : "";
+  const title = esc(t.title || t.id);
+  const url = issueUrl(t.ref);
+  // Clicking the title opens its GitHub issue (when the ref points to one).
+  const titleHtml = url
+    ? `<a class="tb-title tb-title-link" href="${esc(url)}" target="_blank" rel="noopener">${title}</a>`
+    : `<div class="tb-title">${title}</div>`;
   return `<div class="tb-card tb-${esc(t.status)}">
-    <div class="tb-title">${esc(t.title || t.id)}</div>
+    ${titleHtml}
     <div class="tb-meta"><span class="tb-id">${esc(t.id)}</span>${ref}</div>
     <div class="tb-meta">${who}${t.cap ? ` · ${esc(t.cap)}` : ""}</div>
   </div>`;
