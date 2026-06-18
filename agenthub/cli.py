@@ -1032,7 +1032,9 @@ def cmd_task_reassign(args):
 def cmd_update(args):
     """Pull + apply the latest Agora into this install (issue #69)."""
     from .selfupdate import do_update
-    r = do_update(restart=not args.no_restart, check_only=args.check)
+    r = do_update(restart=not args.no_restart, check_only=args.check,
+                  hub_root=str(resolve_root(args.root)),
+                  port=args.port, health_timeout=args.health_timeout)
     if args.json:
         print(json.dumps(r, indent=2))
     else:
@@ -1692,6 +1694,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("update", help="Pull + apply the latest Agora into this install (#69)")
     sp.add_argument("--check", action="store_true", help="Only report if an update is available (no changes)")
     sp.add_argument("--no-restart", action="store_true", help="Pull + pip refresh but don't restart the server")
+    sp.add_argument("--port", type=int, default=8910, help="Server port to restart + health-check (default 8910)")
+    sp.add_argument("--health-timeout", type=float, default=20.0, help="Seconds to wait for the server to return after restart")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_update)
 

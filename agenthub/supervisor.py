@@ -329,7 +329,8 @@ def main(argv=None):
             if su_enabled and should_tick(now, last_update, su_interval):
                 last_update = now
                 from . import selfupdate
-                res = selfupdate.do_update(restart=True)
+                res = selfupdate.do_update(restart=True, hub_root=root,
+                                           port=args.port)
                 print(f"[supervisor] self-update: {res.get('message')}", flush=True)
                 if res.get("changed"):
                     store.post_inbox(

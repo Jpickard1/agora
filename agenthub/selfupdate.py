@@ -2,8 +2,12 @@
 
 `hubcli update` runs do_update(): git pull (--ff-only) the checkout where Agora
 is installed, refresh the editable install (`pip install -e .`), and restart the
-server so the new code is live. It prints the old→new commit, is a safe no-op if
-already current, and gives a clear message if this isn't a git checkout.
+server so the new code is live. The restart is done IN PLACE (kill + immediately
+relaunch from the live tree) and then POLLS /api/health — success is only reported
+once the server is serving again; otherwise it fails loudly with recovery steps.
+Because it brings the server back itself, the supervisor's health-restart never
+has to fire, so the two don't race. It prints the old→new commit, is a safe no-op
+if already current, and gives a clear message if this isn't a git checkout.
 
 The supervisor can optionally run this periodically (see supervisor.py + the
 `selfupdate` config block) so pushed changes propagate to every install.
@@ -16,7 +20,12 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
+import urllib.request
 from pathlib import Path
+
+SERVER_SESSION = "agora-server"
+DEFAULT_PORT = 8910
 
 
 def repo_root() -> Path:
@@ -56,27 +65,93 @@ def pip_install_editable(root: Path) -> tuple[int, str]:
     return p.returncode, (p.stdout + p.stderr).strip()
 
 
-def restart_server(session: str = "agora-server") -> bool:
-    """Kill the server's tmux session so the supervisor (or `hubcli up`) respawns
-    it on the freshly-pulled code. Returns True if a session was killed."""
+def resolve_hub_root() -> str:
+    """The server's data root (AGENT_HUB_ROOT / pointer), not the code checkout.
+    Late-imported to avoid a circular import with cli at module load."""
+    from .cli import resolve_root
+    return str(resolve_root(None))
+
+
+def serve_command(hub_root: str, port: int = DEFAULT_PORT,
+                  python: str | None = None) -> str:
+    """The exact command `hubcli up` uses to launch the server — same env, port,
+    and log file — so a self-update restart is identical to a normal start."""
+    py = python or sys.executable
+    return (f"AGENT_HUB_ROOT={hub_root} {py} -m agenthub.cli serve "
+            f"--host 127.0.0.1 --port {port} > {hub_root}/server.log 2>&1")
+
+
+def _tmux_restart(session: str, command: str, cwd: str | None = None) -> None:
+    """Kill + start the session in one shot (mirrors cli._tmux_start) so there's no
+    'killed, waiting for the supervisor to respawn' gap. `cwd` pins the start dir to
+    the live code tree."""
+    subprocess.run(["tmux", "kill-session", "-t", session],
+                   stderr=subprocess.DEVNULL, check=False)
+    args = ["tmux", "new-session", "-d", "-s", session]
+    if cwd:
+        args += ["-c", str(cwd)]
+    args.append(command)
+    subprocess.run(args, check=False)
+
+
+def restart_server(session: str = SERVER_SESSION, *, hub_root: str | None = None,
+                   port: int = DEFAULT_PORT, cwd: str | None = None,
+                   python: str | None = None) -> bool:
+    """Restart the server IN PLACE — kill its tmux session and immediately start a
+    fresh one on the new code, from the live-tree `cwd`. This replaces the old
+    'kill and hope the supervisor respawns it' behaviour, which left :PORT down for
+    several seconds. Returns True if the (re)start command was issued.
+
+    Because we bring the server back ourselves (and the caller then waits for
+    health), the supervisor's own health-restart never has to fire — so the two
+    don't race for the agora-server session."""
+    if hub_root is None:
+        try:
+            hub_root = resolve_hub_root()
+        except Exception:
+            return False
     try:
-        has = subprocess.run(["tmux", "has-session", "-t", session],
-                             stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL).returncode == 0
-        if has:
-            subprocess.run(["tmux", "kill-session", "-t", session],
-                           stderr=subprocess.DEVNULL, check=False)
-            return True
+        _tmux_restart(session, serve_command(hub_root, port, python), cwd=cwd)
+        return True
     except Exception:
-        pass
-    return False
+        return False
+
+
+def server_health_ok(port: int = DEFAULT_PORT, timeout: float = 3.0) -> bool:
+    """One health probe: True iff GET /api/health returns HTTP 200."""
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/health", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def wait_for_health(port: int = DEFAULT_PORT, *, timeout: float = 20.0,
+                    interval: float = 0.5) -> bool:
+    """Poll /api/health until it returns 200 or `timeout` seconds elapse. This is
+    what lets a restart REPORT SUCCESS ONLY once the server is actually serving
+    again, instead of optimistically assuming it came back."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if server_health_ok(port):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
 
 
 def do_update(root: Path | str | None = None, *, restart: bool = True,
               check_only: bool = False,
-              server_session: str = "agora-server") -> dict:
+              server_session: str = SERVER_SESSION,
+              hub_root: str | None = None, port: int = DEFAULT_PORT,
+              health_timeout: float = 20.0) -> dict:
     """Pull + apply the latest Agora. Returns a result dict with a human `message`
-    and structured fields (ok/git/changed/old/new/restarted)."""
+    and structured fields (ok/git/changed/old/new/restarted/healthy).
+
+    After a restart it POLLS /api/health and only reports success once the server
+    is serving again (`healthy`); if it doesn't come back, `ok` is False and the
+    message gives recovery steps."""
     root = Path(root) if root else repo_root()
     if not is_git_checkout(root):
         return {"ok": False, "git": False, "changed": False,
@@ -103,15 +178,38 @@ def do_update(root: Path | str | None = None, *, restart: bool = True,
                 "message": f"already up to date at {(old or '?')[:8]}"}
 
     pip_rc, _ = pip_install_editable(root)
-    restarted = restart_server(server_session) if restart else False
     msg = f"updated {(old or '?')[:8]} → {(new or '?')[:8]}"
     if pip_rc != 0:
         msg += " (pip refresh reported a warning)"
-    if restarted:
-        msg += " — server restarting on new code"
-    elif restart:
-        msg += " — restart the server to apply (no agora-server tmux found)"
-    else:
-        msg += " — restart the server to apply (--no-restart)"
-    return {"ok": True, "git": True, "changed": True, "old": old, "new": new,
-            "pip_ok": pip_rc == 0, "restarted": restarted, "message": msg}
+
+    if not restart:
+        return {"ok": True, "git": True, "changed": True, "old": old, "new": new,
+                "pip_ok": pip_rc == 0, "restarted": False, "healthy": None,
+                "message": msg + " — restart the server to apply (--no-restart)"}
+
+    if hub_root is None:
+        try:
+            hub_root = resolve_hub_root()
+        except Exception:
+            hub_root = None
+    restarted = restart_server(server_session, hub_root=hub_root, port=port,
+                               cwd=str(root))
+    if not restarted:
+        return {"ok": True, "git": True, "changed": True, "old": old, "new": new,
+                "pip_ok": pip_rc == 0, "restarted": False, "healthy": None,
+                "message": msg + f" — could not restart the server (tmux start failed); "
+                                 f"start it with: hubcli up"}
+
+    # Only report success once the server is actually serving again.
+    healthy = wait_for_health(port, timeout=health_timeout)
+    if healthy:
+        return {"ok": True, "git": True, "changed": True, "old": old, "new": new,
+                "pip_ok": pip_rc == 0, "restarted": True, "healthy": True,
+                "message": msg + f" — server back up on :{port} (health OK)"}
+    # Restarted but never came back: fail loudly with recovery steps.
+    return {"ok": False, "git": True, "changed": True, "old": old, "new": new,
+            "pip_ok": pip_rc == 0, "restarted": True, "healthy": False,
+            "message": msg + f" — ⚠ server did NOT return on :{port} within "
+                             f"{int(health_timeout)}s. Recover: run 'hubcli up', or "
+                             f"AGENT_HUB_ROOT={hub_root} hubcli serve --port {port}; "
+                             f"check {hub_root}/server.log for the error."}
