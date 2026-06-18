@@ -162,6 +162,44 @@ def extract_mentions(text: str) -> set[str]:
     return {m.lower() for m in _MENTION_RE.findall(text or "")}
 
 
+def parse_channels(spec: str | None) -> list[str]:
+    """Parse a comma-separated --channels value into a clean, de-duplicated list
+    (order preserved). A leading '#' on any name is tolerated."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for c in (spec or "").split(","):
+        c = c.strip().lstrip("#")
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def resolve_channels(store, all_channels: bool, channels_spec: str | None,
+                     default_channel: str) -> list[str]:
+    """The channel names this bridge should currently follow:
+      --all-channels -> every channel that exists (re-resolved live so new ones
+                        created later are picked up automatically),
+      --channels a,b -> exactly those,
+      else           -> [default_channel] (single-channel back-compat)."""
+    if all_channels:
+        return [c["name"] for c in store.list_channels()]
+    if channels_spec:
+        return parse_channels(channels_spec)
+    return [default_channel]
+
+
+def channels_activity(names: list[str]) -> str:
+    """Roster 'activity' string describing the set of followed channels."""
+    if not names:
+        return "no channels"
+    if len(names) == 1:
+        return f"on #{names[0]}"
+    if len(names) <= 3:
+        return "on " + ", ".join("#" + n for n in names)
+    return f"on {len(names)} channels"
+
+
 def channel_msg_for_me(text: str, aid: str, name: str,
                        firehose: bool = False) -> bool:
     """A4 mention routing: should a #channel message be injected into THIS
@@ -191,7 +229,12 @@ def inject(pane: str, text: str) -> None:
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="hub-bridge")
     ap.add_argument("--name", required=True, help="This agent's name (also its hub id)")
-    ap.add_argument("--channel", default="general", help="Channel to listen to")
+    ap.add_argument("--channel", default="general",
+                    help="Channel to listen to (single-channel default)")
+    ap.add_argument("--channels", default=None,
+                    help="Comma-separated channels to follow, e.g. general,dev,alerts")
+    ap.add_argument("--all-channels", dest="all_channels", action="store_true",
+                    help="Follow EVERY channel, including ones created later")
     ap.add_argument("--root", default=None, help="Hub root (else env/pointer)")
     ap.add_argument("--pane", default=None, help="tmux pane id (else auto-detect)")
     ap.add_argument("--interval", type=float, default=2.0)
@@ -228,14 +271,21 @@ def main(argv=None):
     store.register_agent(aid, args.name, host=host, pid=os.getpid(),
                          capabilities=["claude-code"],
                          extra={"tmux_session": session})
-    store.heartbeat(aid, status="listening", activity=f"on #{args.channel}")
+    channels = resolve_channels(store, args.all_channels, args.channels,
+                                args.channel)
+    store.heartbeat(aid, status="listening", activity=channels_activity(channels))
     idle_mode = pane is not None and not args.no_idle_wait
+    chans_desc = ("ALL channels (auto-following new ones)" if args.all_channels
+                  else ", ".join("#" + c for c in channels) or "(none)")
     print(f"[bridge] '{args.name}' connected (id={aid}, host={host}, pane={pane}). "
-          f"Listening on #{args.channel} + direct inbox + broadcasts. "
+          f"Listening on {chans_desc} + direct inbox + broadcasts. "
           f"idle-wait={'on' if idle_mode else 'off'}.")
 
     start = 0.0 if args.history else time.time()
-    chan_cursor = start
+    # Per-channel cursors so each channel is tracked independently. New channels
+    # discovered later (in --all-channels mode) start from 'now' (or 0 with
+    # --history) so we don't replay their whole backlog on first sight.
+    chan_cursors: dict[str, float] = {c: start for c in channels}
     inbox_cursor = start
     bcast_cursor = start
 
@@ -277,15 +327,29 @@ def main(argv=None):
                 idle_streak = idle_streak + 1 if (not busy and settled) else 0
 
             # 1. Collect new messages from all sources into the queue (in order).
+            # In --all-channels mode, re-resolve the live channel set each loop so
+            # channels created after we started are followed automatically.
+            if args.all_channels:
+                added = False
+                for c in resolve_channels(store, True, None, args.channel):
+                    if c not in chan_cursors:
+                        chan_cursors[c] = start if args.history else time.time()
+                        print(f"[bridge] now following new channel #{c}", flush=True)
+                        added = True
+                if added:
+                    channels = list(chan_cursors.keys())
+                    store.heartbeat(aid, activity=channels_activity(channels))
+
             fresh: list[tuple[str, dict]] = []
-            for m in store.read_channel(args.channel, since_ts=chan_cursor):
-                chan_cursor = max(chan_cursor, m["ts"])
-                # A4: skip channel messages that @mention only other agents, so
-                # we don't interrupt this agent with chatter that isn't for it.
-                if (not is_mine(m)
-                        and channel_msg_for_me(m["text"], aid, args.name,
-                                               firehose=args.firehose)):
-                    fresh.append((f"#{args.channel}", m))
+            for ch in list(chan_cursors.keys()):
+                for m in store.read_channel(ch, since_ts=chan_cursors[ch]):
+                    chan_cursors[ch] = max(chan_cursors[ch], m["ts"])
+                    # A4: skip channel messages that @mention only other agents,
+                    # so we don't interrupt this agent with chatter not for it.
+                    if (not is_mine(m)
+                            and channel_msg_for_me(m["text"], aid, args.name,
+                                                   firehose=args.firehose)):
+                        fresh.append((f"#{ch}", m))
             for m in store.read_inbox(aid, since_ts=inbox_cursor):
                 inbox_cursor = max(inbox_cursor, m["ts"])
                 if not is_mine(m):
