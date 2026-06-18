@@ -73,9 +73,19 @@ tmux new -s trainer
 claude
 #   find this pane's id from another shell:  tmux list-panes -t trainer -F '#{pane_id}'
 
-# Pane 2 (Ctrl-b c) — the bridge, keep it running:
-hubcli listen --name trainer --pane <pane id from above>
+# Start the bridge in its OWN detached tmux session so it survives terminal
+# closes / SSH disconnects (don't just run it in a pane you'll later close):
+tmux new-session -d -s trainer-bridge \
+  "$(command -v hubcli) listen --name trainer --pane <pane id from above>"
 ```
+> **Persistence gotcha (this is the #1 reason a bridge "dies"):** the bridge is a
+> long-running foreground program. If you run it in a normal pane and then close
+> that pane, Ctrl-C it, or your SSH drops, it stops and the agent goes offline.
+> Running it in a **detached tmux session** (above) keeps it alive independently.
+> Also use the **full path** to `hubcli` (`$(command -v hubcli)`) — a detached
+> tmux shell may not have conda/venv on its `PATH`, so a bare `hubcli` can fail
+> with "command not found". Manage it with `tmux attach -t trainer-bridge`
+> (Ctrl-b d to detach) and `tmux kill-session -t trainer-bridge` to stop.
 Then paste this to the agent so it knows how to reply (or run
 `hubcli connect-help --name trainer` to print it):
 

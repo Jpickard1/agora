@@ -331,6 +331,8 @@ def cmd_listen(args):
     argv = ["--name", args.name, "--channel", args.channel]
     if args.root:
         argv += ["--root", args.root]
+    if args.pane:
+        argv += ["--pane", args.pane]
     if args.history:
         argv.append("--history")
     bridge_main(argv)
@@ -463,9 +465,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--description", "-d")
     sp.set_defaults(func=cmd_mkchannel)
 
-    sp = sub.add_parser("listen", help="Connect THIS Claude Code agent (in tmux) and listen")
+    sp = sub.add_parser("listen", help="Connect a Claude Code agent (in tmux) and listen")
     sp.add_argument("--name", required=True, help="Agent name (also its hub id)")
     sp.add_argument("--channel", default="general")
+    sp.add_argument("--pane", help="tmux pane id to inject into (else auto-detect this pane)")
+    sp.add_argument("--root", help="Hub root (else env/pointer)")
     sp.add_argument("--history", action="store_true", help="Deliver pre-existing messages too")
     sp.set_defaults(func=cmd_listen)
 
