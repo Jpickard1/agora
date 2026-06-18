@@ -115,11 +115,45 @@ def create_app(root: str | Path) -> FastAPI:
         created = store.ensure_channel(name, description=payload.get("description", ""))
         return {"name": created}
 
+    def _with_reactions(msgs: list[dict]) -> list[dict]:
+        """Attach aggregated emoji reactions (issue #61) to a list of messages."""
+        by_id = store.reactions_for([m.get("id") for m in msgs if m.get("id")])
+        for m in msgs:
+            r = by_id.get(m.get("id"))
+            if r:
+                m["reactions"] = r
+        return msgs
+
     @app.get("/api/channels/{channel}/messages")
     def channel_messages(channel: str, since: float = 0.0, limit: int = 200,
                          x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
-        return store.read_channel(channel, since_ts=since, limit=limit)
+        return _with_reactions(store.read_channel(channel, since_ts=since, limit=limit))
+
+    # -- reactions (issue #61) -------------------------------------------
+    @app.get("/api/messages/{msg_id}/reactions")
+    def get_reactions(msg_id: str, x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.get_reactions(msg_id)
+
+    @app.post("/api/messages/{msg_id}/reactions")
+    def post_reaction(msg_id: str, payload: dict = Body(...),
+                      x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        emoji = (payload.get("emoji") or "").strip()
+        author = payload.get("author") or "human"
+        author_name = payload.get("author_name") or author
+        op = (payload.get("op") or "toggle").lower()
+        try:
+            if op == "add":
+                r = store.add_reaction(msg_id, emoji, author, author_name=author_name)
+            elif op == "remove":
+                r = store.remove_reaction(msg_id, emoji, author)
+            else:
+                r = store.toggle_reaction(msg_id, emoji, author, author_name=author_name)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"msg_id": msg_id, "reactions": r}
 
     @app.post("/api/channels/{channel}/messages")
     def post_channel(channel: str, payload: dict = Body(...),
@@ -143,7 +177,7 @@ def create_app(root: str | Path) -> FastAPI:
     def firehose(since: float = 0.0, limit: int = 200,
                  x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
-        return store.firehose(since_ts=since, limit=limit)
+        return _with_reactions(store.firehose(since_ts=since, limit=limit))
 
     # -- full-text search (issue #51) -----------------------------------
     @app.get("/api/search")
@@ -168,7 +202,7 @@ def create_app(root: str | Path) -> FastAPI:
     def read_broadcast(since: float = 0.0, limit: int = 200,
                        x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
-        return store.read_broadcast(since_ts=since, limit=limit)
+        return _with_reactions(store.read_broadcast(since_ts=since, limit=limit))
 
     @app.post("/api/broadcast")
     def post_broadcast(payload: dict = Body(...),
@@ -383,7 +417,7 @@ def create_app(root: str | Path) -> FastAPI:
     def agent_inbox(agent_id: str, since: float = 0.0, limit: int = 200,
                     x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
-        return store.read_inbox(agent_id, since_ts=since, limit=limit)
+        return _with_reactions(store.read_inbox(agent_id, since_ts=since, limit=limit))
 
     @app.post("/api/agents/{agent_id}/inbox")
     def send_instruction(agent_id: str, payload: dict = Body(...),
@@ -482,6 +516,7 @@ def create_app(root: str | Path) -> FastAPI:
             cursors: dict[str, float] = {}
             inbox_cursors: dict[str, float] = {}
             broadcast_cursor = start
+            reaction_cursor = start
             yield _sse({"type": "hello", "ts": start})
             while True:
                 if await request.is_disconnected():
@@ -505,6 +540,17 @@ def create_app(root: str | Path) -> FastAPI:
                     for m in store.read_broadcast(since_ts=broadcast_cursor):
                         broadcast_cursor = max(broadcast_cursor, m["ts"])
                         yield _sse({"type": "broadcast", "message": m})
+                    # New reaction changes (issue #61): emit the message's current
+                    # aggregated reactions, once per changed message in the batch.
+                    rxn_events = store.read_reaction_events(since_ts=reaction_cursor)
+                    changed = []
+                    for ev in rxn_events:
+                        reaction_cursor = max(reaction_cursor, ev["ts"])
+                        if ev["msg_id"] not in changed:
+                            changed.append(ev["msg_id"])
+                    for mid in changed:
+                        yield _sse({"type": "reaction", "msg_id": mid,
+                                    "reactions": store.get_reactions(mid)})
                     # Presence snapshot.
                     yield _sse({"type": "agents", "agents": store.list_agents()})
                     # Task-board snapshot (durable dispatch state, live).
