@@ -608,6 +608,8 @@ class HubStore:
             # Liveness sub-status (issue #53): responsive | busy | wedged | idle.
             # online says "heartbeating"; liveness says "actually keeping up".
             "liveness": existing.get("liveness", "responsive"),
+            # Delivery health (issue #54): queued count + last-delivered/last-receipt ts.
+            "delivery": existing.get("delivery", {}),
             "activity": existing.get("activity", ""),
             "registered": existing.get("registered", now),
             "last_seen": now,
@@ -618,7 +620,8 @@ class HubStore:
 
     def heartbeat(self, agent_id: str, status: str = "online",
                   activity: str | None = None,
-                  liveness: str | None = None) -> dict[str, Any] | None:
+                  liveness: str | None = None,
+                  delivery: dict | None = None) -> dict[str, Any] | None:
         aid = _safe_name(agent_id)
         path = self.agents_dir / f"{aid}.json"
         record = _read_json(path)
@@ -630,6 +633,8 @@ class HubStore:
             record["activity"] = activity
         if liveness is not None:
             record["liveness"] = liveness
+        if delivery is not None:
+            record["delivery"] = delivery
         _atomic_write_json(path, record)
         return record
 
@@ -660,6 +665,7 @@ class HubStore:
             else:
                 rec["online"] = age <= online_window
             rec["age"] = age
+            rec.setdefault("delivery", {})   # issue #54: delivery-health fields
             # An agent that isn't online can't be "responsive/busy/…"; report
             # offline so the roster/API never show a stale liveness (issue #53).
             rec.setdefault("liveness", "responsive")

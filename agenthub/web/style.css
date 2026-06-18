@@ -80,6 +80,9 @@ html, body { height: 100%; overflow: hidden; }
 /* liveness sub-status (#53): 'wedged' = online but stuck — make it loud */
 .status-badge.st-wedged { background: rgba(231,76,60,.85); color: #fff; }
 .live-sub { margin-left: 6px; flex: none; font-size: 9.5px; color: var(--muted); opacity: .8; text-transform: lowercase; }
+/* delivery health (#54): queued-message badge; turns red when not draining */
+.queued-badge { margin-left: 6px; flex: none; font-size: 9.5px; padding: 1px 6px; border-radius: 10px; background: var(--bg3); color: var(--muted); }
+.queued-badge.backlog { background: rgba(231,76,60,.85); color: #fff; }
 
 /* ---------- main ---------- */
 .topbar { padding: 14px 18px; border-bottom: 1px solid var(--border); }

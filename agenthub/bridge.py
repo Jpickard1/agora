@@ -138,6 +138,16 @@ def classify_liveness(has_pane: bool, busy: bool, unchanged_for: float, *,
     return "responsive" if unchanged_for < idle_after else "idle"
 
 
+def delivery_backlog(queued: int, last_delivered_ts: float, now: float,
+                     stale_after: float = 30.0) -> bool:
+    """Delivery health flag (issue #54): True when messages are queued for an
+    agent but none has been delivered recently — i.e. an unacked queue that's
+    backing up (the agent isn't draining it). queued==0 is always healthy."""
+    if queued <= 0:
+        return False
+    return (now - (last_delivered_ts or 0)) > stale_after
+
+
 def pane_busy(text: str) -> bool:
     """True if the pane shows the agent is mid-turn (not ready for input)."""
     low = text.lower()
@@ -343,6 +353,10 @@ def main(argv=None):
     # tell a 'wedged' agent (busy but frozen) from a 'busy' one (still producing).
     last_live_snap = ""
     last_change_ts = time.time()
+    # Delivery health (issue #54): when this agent last had a message injected and
+    # last had a receipt written, so the roster/`hubcli health` can spot a backed-up
+    # or unacked queue. A dict so the deliver() closure can mutate it.
+    health = {"last_delivered_ts": 0.0, "last_receipt_ts": 0.0}
 
     def is_mine(m) -> bool:
         return is_self_message(m, aid, args.name)
@@ -350,6 +364,7 @@ def main(argv=None):
     def deliver(where: str, m: dict) -> None:
         line = f"[HUB {where} from {m['author_name']}]: {m['text']}"
         transport.deliver(line)
+        health["last_delivered_ts"] = time.time()
         # A2: confirm delivery back to the sender for real deliveries (tmux/file),
         # never for our own messages (filtered out before delivery) or stdout echo.
         if args.receipts and transport.kind != "stdout":
@@ -358,6 +373,7 @@ def main(argv=None):
                 try:
                     store.post_inbox(to, text, author=aid, author_name=args.name,
                                      author_kind="system", host=host, meta=meta)
+                    health["last_receipt_ts"] = time.time()
                 except Exception as e:
                     print(f"[bridge] receipt write failed: {e}", flush=True)
 
@@ -415,10 +431,14 @@ def main(argv=None):
             now = time.time()
             pending.extend((now, where, m) for where, m in fresh)
 
-            # A5 status + #53 liveness for the roster (preserve free-text activity).
+            # A5 status + #53 liveness + #54 delivery health for the roster
+            # (preserve free-text activity).
             store.heartbeat(aid, status=compute_status(pane is not None, busy,
                                                        len(pending)),
-                            liveness=liveness)
+                            liveness=liveness,
+                            delivery={"queued": len(pending),
+                                      "last_delivered_ts": health["last_delivered_ts"],
+                                      "last_receipt_ts": health["last_receipt_ts"]})
 
             # 2. Try to flush the queue when the pane is ready.
             if pending:

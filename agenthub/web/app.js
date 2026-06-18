@@ -233,12 +233,22 @@ function agentLi(a) {
     ? `<span class="status-badge st-wedged" title="online but pane output is frozen — may be stuck">⚠ wedged</span>`
     : (live && live !== "responsive"
         ? `<span class="live-sub" title="liveness: ${live}">${live}</span>` : "");
+  // Delivery health (#54): queued count + a backlog flag (queued and nothing
+  // delivered for a while = not draining).
+  const d = a.delivery || {};
+  const queued = a.online ? (d.queued || 0) : 0;
+  const ldAge = d.last_delivered_ts ? (Date.now() / 1000 - d.last_delivered_ts) : Infinity;
+  const backlog = queued > 0 && ldAge > 30;
+  const queuedBadge = queued > 0
+    ? `<span class="queued-badge${backlog ? " backlog" : ""}" title="${queued} message(s) queued for delivery${backlog ? " — not draining" : ""}">⌛ ${queued}</span>`
+    : "";
   li.innerHTML = `
     <div class="row1">
       <span class="pdot ${a.online ? "online" : ""}"></span>
       <span class="aname">${esc(a.name)}</span>
       <span class="status-badge ${st.cls}">${st.label}</span>
       ${liveBadge}
+      ${queuedBadge}
     </div>
     ${a.activity ? `<div class="ameta work">▸ ${esc(a.activity)}</div>` : ""}
     <div class="ameta">🖥 ${esc(a.host || "?")}${sess ? ` · ⧉ ${esc(sess)}` : ""}</div>

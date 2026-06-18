@@ -294,6 +294,40 @@ def cmd_agents(args):
         print(f"{dot:8} {live_disp:11} {a['id']:40} {a.get('host', ''):16} {last:10} {caps}")
 
 
+def cmd_health(args):
+    """Per-agent delivery health (issue #54): queued / last-delivered /
+    last-receipt, flagging a backed-up unacked queue."""
+    from .bridge import delivery_backlog
+    store = _store(args)
+    a = store.get_agent(args.agent)
+    if a is None:
+        print(f"✗ No such agent: {args.agent}", file=sys.stderr)
+        sys.exit(2)
+    agents = {x["id"]: x for x in store.list_agents()}
+    a = agents.get(_safe_agent(args.agent), a)
+    d = a.get("delivery") or {}
+    queued = int(d.get("queued", 0) or 0)
+    now = time.time()
+    ld, lr = d.get("last_delivered_ts") or 0, d.get("last_receipt_ts") or 0
+    backlog = delivery_backlog(queued, ld, now, stale_after=args.stale_after)
+    if args.json:
+        print(json.dumps({"id": a.get("id"), "online": a.get("online"),
+                          "liveness": a.get("liveness"), "queued": queued,
+                          "last_delivered_ts": ld, "last_receipt_ts": lr,
+                          "backlog": backlog}, indent=2))
+        return
+    dot = "🟢 online" if a.get("online") else "⚪ offline"
+    print(f"{a.get('id')}  {dot}  liveness={a.get('liveness', '?')}")
+    print(f"  queued:         {queued}" + ("  ⚠️ BACKLOG (not draining)" if backlog else ""))
+    print(f"  last delivered: {(_fmt_ts(ld) + f'  ({int(now - ld)}s ago)') if ld else '—'}")
+    print(f"  last receipt:   {(_fmt_ts(lr) + f'  ({int(now - lr)}s ago)') if lr else '—'}")
+
+
+def _safe_agent(name):
+    from .store import _safe_name
+    return _safe_name(name)
+
+
 def cmd_graph(args):
     store = _store(args)
     g = store.comm_graph()
@@ -1187,6 +1221,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--window", type=float, default=30.0, help="Online window (s)")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_usage)
+
+    sp = sub.add_parser("health", help="Delivery health for one agent (queued/last-delivered/backlog)")
+    sp.add_argument("agent", help="Agent id")
+    sp.add_argument("--stale-after", type=float, default=30.0,
+                    help="Flag a backlog if queued and nothing delivered in this many seconds")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_health)
 
     sp = sub.add_parser("graph", help="Agent communication graph (who DMs whom)")
     sp.add_argument("--json", action="store_true")
