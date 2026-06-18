@@ -17,6 +17,7 @@ const state = {
   name: localStorage.getItem(LS_NAME) || "",   // resolved from /api/whoami if unset (issue #67)
   view: { type: "channel", id: "general" },
   channels: [],
+  showPrivate: localStorage.getItem("agenthub.showPrivate") === "1",  // reveal private group (#102)
   agents: [],
   tasks: [],        // durable task-board state (live via SSE)
   mentions: [],     // messages mentioning the viewer (issue #52)
@@ -242,22 +243,51 @@ async function refreshLocks() {
 }
 
 /* ---------------- sidebar ---------------- */
+function isPrivateChannel(c) {
+  return (c.visibility || "public") === "private";
+}
+
+function channelLi(c) {
+  const li = document.createElement("li");
+  // visibility indicator (#14/#102): a 🔒 for private channels; public keep '#'.
+  const priv = isPrivateChannel(c);
+  const lock = priv ? `<span class="ch-lock" title="private — hidden by default">🔒</span>` : "";
+  li.title = priv ? "private channel (UI-hidden by default)" : "public channel (shared)";
+  li.innerHTML = `<span class="hash">#</span><span>${esc(c.name)}</span>${lock}`;
+  li.onclick = () => selectView({ type: "channel", id: c.name });
+  if (state.view.type === "channel" && state.view.id === c.name) li.classList.add("active");
+  return li;
+}
+
 async function refreshChannels() {
   state.channels = await api("/api/channels");
   const ul = $("#channel-list");
   ul.innerHTML = "";
-  state.channels.forEach((c) => {
-    const li = document.createElement("li");
-    // visibility indicator (#14): a 🔒 for private (owner-only) channels; shared
-    // channels keep the plain #. /api/channels carries the 'visibility' field.
-    const priv = (c.visibility || "public") === "private";
-    const lock = priv ? `<span class="ch-lock" title="private — your agents only">🔒</span>` : "";
-    li.title = priv ? "private channel (owner-only)" : "shared channel (ewsc_users group)";
-    li.innerHTML = `<span class="hash">#</span><span>${esc(c.name)}</span>${lock}`;
-    li.onclick = () => selectView({ type: "channel", id: c.name });
-    if (state.view.type === "channel" && state.view.id === c.name) li.classList.add("active");
-    ul.appendChild(li);
-  });
+  const pub = state.channels.filter((c) => !isPrivateChannel(c));
+  const priv = state.channels.filter(isPrivateChannel);
+  // keep the currently-open private channel visible even when the group is collapsed
+  const activePrivate = state.view.type === "channel" &&
+    priv.some((c) => c.name === state.view.id);
+
+  pub.forEach((c) => ul.appendChild(channelLi(c)));
+
+  // Private channels (#102): tucked under a collapsed group by default so the
+  // sidebar isn't bombarded; a click toggles reveal (persisted in localStorage).
+  if (priv.length) {
+    const show = state.showPrivate || activePrivate;
+    const head = document.createElement("li");
+    head.className = "priv-head";
+    head.innerHTML = `<span>${show ? "▾" : "▸"} 🔒 Private</span>`
+      + `<span class="count">${priv.length}</span>`;
+    head.title = "Private channels — click to " + (show ? "hide" : "show");
+    head.onclick = () => {
+      state.showPrivate = !state.showPrivate;
+      localStorage.setItem("agenthub.showPrivate", state.showPrivate ? "1" : "0");
+      refreshChannels();
+    };
+    ul.appendChild(head);
+    if (show) priv.forEach((c) => ul.appendChild(channelLi(c)));
+  }
 }
 
 async function refreshAgents() {
@@ -1322,13 +1352,47 @@ $("#nav-people").onclick = () => selectView({ type: "people" });
 $("#nav-firehose").onclick = () => selectView({ type: "firehose" });
 $("#nav-broadcast").onclick = () => selectView({ type: "broadcast" });
 
-$("#add-channel").onclick = async () => {
-  const name = prompt("New channel name:");
-  if (!name) return;
-  await api("/api/channels", { method: "POST", body: JSON.stringify({ name }) });
+/* new-channel modal with a public/private selector (#102) */
+function openNewChannel() {
+  $("#newchan-err").textContent = "";
+  $("#newchan-name").value = "";
+  const pub = document.querySelector('input[name="newchan-vis"][value="public"]');
+  if (pub) pub.checked = true;
+  $("#newchan-modal").classList.remove("hidden");
+  $("#newchan-name").focus();
+}
+function closeNewChannel() { $("#newchan-modal").classList.add("hidden"); }
+
+async function createChannel() {
+  const name = $("#newchan-name").value.trim();
+  if (!name) { $("#newchan-err").textContent = "Channel name is required."; return; }
+  const sel = document.querySelector('input[name="newchan-vis"]:checked');
+  const visibility = sel ? sel.value : "public";
+  try {
+    await api("/api/channels", { method: "POST",
+      body: JSON.stringify({ name, visibility }) });
+  } catch (e) {
+    $("#newchan-err").textContent = "Could not create: " + e.message; return;
+  }
+  closeNewChannel();
+  // reveal the private group so a freshly-created private channel is visible
+  if (visibility === "private") {
+    state.showPrivate = true;
+    localStorage.setItem("agenthub.showPrivate", "1");
+  }
   await refreshChannels();
-  selectView({ type: "channel", id: name.trim().toLowerCase().replace(/[^a-z0-9_.@-]+/g, "-") });
-};
+  selectView({ type: "channel", id: name.toLowerCase().replace(/[^a-z0-9_.@-]+/g, "-") });
+}
+
+$("#add-channel").onclick = openNewChannel;
+if ($("#newchan-cancel")) $("#newchan-cancel").onclick = closeNewChannel;
+if ($("#newchan-create")) $("#newchan-create").onclick = createChannel;
+if ($("#newchan-modal")) $("#newchan-modal").addEventListener("click", (e) => {
+  if (e.target === $("#newchan-modal")) closeNewChannel();
+});
+if ($("#newchan-name")) $("#newchan-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") createChannel();
+});
 
 /* ---------------- spawn a new agent (users only) ---------------- */
 const spawnModal = $("#spawn-modal");

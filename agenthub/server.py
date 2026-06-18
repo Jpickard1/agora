@@ -129,8 +129,13 @@ def create_app(root: str | Path) -> FastAPI:
         name = (payload.get("name") or "").strip()
         if not name:
             raise HTTPException(400, "name required")
-        created = store.ensure_channel(name, description=payload.get("description", ""))
-        return {"name": created}
+        # public/private selector (#102): mirror `mkchannel --public/--private`.
+        vis = (payload.get("visibility") or "public").strip().lower()
+        if vis not in ("public", "private"):
+            vis = "public"
+        created = store.ensure_channel(name, description=payload.get("description", ""),
+                                       visibility=vis)
+        return {"name": created, "visibility": vis}
 
     def _with_reactions(msgs: list[dict]) -> list[dict]:
         """Attach aggregated emoji reactions (issue #61) to a list of messages."""

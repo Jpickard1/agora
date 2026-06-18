@@ -438,3 +438,19 @@ a.tb-title-link:hover { color: var(--accent); text-decoration: underline; }
 .cdm-btn:hover { background: var(--accent); color: #fff; }
 /* channel visibility (#14): lock icon on private channels in the sidebar */
 .ch-lock { margin-left: auto; font-size: 10px; opacity: .75; flex: none; }
+
+/* Private-channel group + new-channel visibility selector (#102) */
+.priv-head {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); padding: 6px 10px 2px; user-select: none;
+}
+.priv-head:hover { color: var(--text); }
+.priv-head .count { margin-left: auto; }
+.vis-choice { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.vis-choice .radio {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-weight: 500; width: auto;
+}
+.vis-choice .radio input { width: auto; }
+.vis-choice .modal-hint { display: inline; margin: 0; }
