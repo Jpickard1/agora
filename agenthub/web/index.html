@@ -123,6 +123,13 @@
           <input id="spawn-session" type="text" placeholder="defaults to the agent name" autocomplete="off" />
         </label>
       </div>
+      <label>Channels to follow
+        <select id="spawn-chan-mode">
+          <option value="all">All channels (recommended — includes new ones)</option>
+          <option value="some">Specific channels…</option>
+        </select>
+      </label>
+      <div id="spawn-chan-list" class="spawn-chans hidden"></div>
       <div id="spawn-err" class="err"></div>
       <div class="modal-actions">
         <button id="spawn-cancel" class="btn-secondary" type="button">Cancel</button>

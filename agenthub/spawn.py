@@ -79,8 +79,22 @@ def bootstrap_prompt(name: str, tasks: str, bridge_session: str) -> str:
     )
 
 
+def _channels_flag(channels) -> str:
+    """Map a spawn channel selection to the bridge's listen flag (issue #81).
+      None / "all" / [] -> --all-channels (the sensible default, follows new ones)
+      list of names     -> --channels a,b,c  (sanitised + shlex-quoted)
+    Bridge flags themselves come from #13/#75."""
+    if not channels or channels == "all":
+        return " --all-channels"
+    names = channels if isinstance(channels, list) else str(channels).split(",")
+    names = [_safe_name(c) for c in names if c and str(c).strip()]
+    if not names:
+        return " --all-channels"
+    return " --channels " + shlex.quote(",".join(names))
+
+
 def build_spawn_plan(name: str, path: str, machine: str, session: str,
-                     tasks: str, *, hub_root: str,
+                     tasks: str, *, hub_root: str, channels=None,
                      hubcli_bin: str | None = None, claude_bin: str | None = None,
                      seed_delay: int = 4) -> dict:
     """Build (don't run) the spawn plan: the exact argv steps to execute. Pure +
@@ -121,7 +135,8 @@ def build_spawn_plan(name: str, path: str, machine: str, session: str,
     # shell string — built only from server-controlled values + sanitised name/
     # session, and shlex-quoted regardless.
     bridge_cmd = (f"AGENT_HUB_ROOT={shlex.quote(hub_root)} {shlex.quote(hubcli_bin)} "
-                  f"listen --name {shlex.quote(name)} --pane {shlex.quote(session)}")
+                  f"listen --name {shlex.quote(name)} --pane {shlex.quote(session)}"
+                  + _channels_flag(channels))
 
     immediate = [
         ["tmux", "new-session", "-d", "-s", session, "-c", path, claude_bin],
@@ -142,6 +157,7 @@ def build_spawn_plan(name: str, path: str, machine: str, session: str,
         "immediate": immediate,
         "delayed": delayed,
         "seed_delay": int(seed_delay),
+        "channels": channels or "all",
     }
 
 
