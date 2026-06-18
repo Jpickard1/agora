@@ -333,6 +333,30 @@ def cmd_task_show(args):
     _print_task(t, verbose=True)
 
 
+def cmd_task_release(args):
+    store = _store(args)
+    if store.get_task(args.id) is None:
+        print(f"✗ No such task: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    if store.release_task(args.id, by=args.author, force=args.force):
+        print(f"✓ Released {args.id} → open (now reclaimable)")
+    else:
+        t = store.get_task(args.id)
+        print(f"✗ {args.id} is claimed by @{t.get('claimed_by')}, not you. "
+              f"Use --force to override (or 'task reassign').", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_task_reassign(args):
+    store = _store(args)
+    t = store.reassign_task(args.id, args.agent, by=args.author or "manager",
+                            note=args.note or "")
+    if t is None:
+        print(f"✗ No such task: {args.id}", file=sys.stderr)
+        sys.exit(2)
+    print(f"✓ Reassigned {args.id} → @{t.get('claimed_by')}")
+
+
 def cmd_doctor(args):
     root = resolve_root(args.root)
     store = HubStore(root)
@@ -650,6 +674,19 @@ def build_parser() -> argparse.ArgumentParser:
     tp.add_argument("--author", help="Agent reporting the update")
     tp.add_argument("--note")
     tp.set_defaults(func=cmd_task_update)
+
+    tp = tsub.add_parser("release", help="Drop your claim so a task can be reclaimed")
+    tp.add_argument("id")
+    tp.add_argument("--author", required=True, help="Agent releasing (must be the owner unless --force)")
+    tp.add_argument("--force", action="store_true", help="Manager override: release regardless of owner")
+    tp.set_defaults(func=cmd_task_release)
+
+    tp = tsub.add_parser("reassign", help="Manager: move a task's claim to another agent")
+    tp.add_argument("id")
+    tp.add_argument("agent", help="New owner agent id")
+    tp.add_argument("--author", help="Who reassigned it (default: manager)")
+    tp.add_argument("--note")
+    tp.set_defaults(func=cmd_task_reassign)
 
     tp = tsub.add_parser("list", help="List tasks (durable dispatch state)")
     tp.add_argument("--status", help="Filter by current status")
