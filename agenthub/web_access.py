@@ -15,7 +15,10 @@ Two capabilities, both designed to be unit-testable without real network calls
 from __future__ import annotations
 
 import json
+import http.client
+import ipaddress
 import os
+import socket
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
@@ -26,6 +29,86 @@ USER_AGENT = "agora-hub/1.0 (+https://github.com/Jpickard1/agora)"
 
 # Block non-web schemes so 'fetch' can't be pointed at file://, ftp://, etc.
 ALLOWED_SCHEMES = ("http", "https")
+
+
+# -- SSRF guard (issue #44) ------------------------------------------------
+# Prevent agent web access from reaching internal infrastructure: resolve the
+# host and refuse private / loopback / link-local / reserved ranges (incl. the
+# 169.254.169.254 cloud-metadata endpoint). To stop DNS-rebinding (TOCTOU), we
+# resolve once, validate every returned address, then pin the actual connection
+# to a validated IP. Overridable for trusted intranets via allow_private (or
+# AGORA_FETCH_ALLOW_PRIVATE=1).
+
+class SSRFBlocked(Exception):
+    """Raised when a URL resolves to a non-public address."""
+
+
+def _allow_private_default():
+    return os.environ.get("AGORA_FETCH_ALLOW_PRIVATE", "").lower() in ("1", "true", "yes")
+
+
+def ip_is_public(ip_str):
+    """True if `ip_str` is a routable public address (not private/loopback/
+    link-local/reserved/multicast/unspecified)."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    return not (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def _default_resolver(host):
+    return sorted({info[4][0] for info in socket.getaddrinfo(host, None)})
+
+
+def validate_host(host, allow_private=False, resolver=None):
+    """Resolve `host` and return its IPs if ALL are public; raise SSRFBlocked
+    otherwise. A literal-IP host is checked directly (no DNS). `resolver` is
+    injectable for tests."""
+    if not host:
+        raise SSRFBlocked("missing host")
+    resolver = resolver or _default_resolver
+    try:
+        ipaddress.ip_address(host)           # literal IP?
+        ips = [host]
+    except ValueError:
+        try:
+            ips = resolver(host)
+        except Exception as e:
+            raise SSRFBlocked(f"could not resolve host '{host}': {e}")
+    if not ips:
+        raise SSRFBlocked(f"no addresses resolved for host '{host}'")
+    if allow_private:
+        return ips
+    for ip in ips:
+        if not ip_is_public(ip):
+            raise SSRFBlocked(f"refusing non-public address {ip} for host '{host}'")
+    return ips
+
+
+def _pinned_opener(pinned_ip):
+    """An opener that dials `pinned_ip` while keeping the original Host/SNI, so a
+    second DNS lookup can't rebind us to an internal address."""
+    class _HTTPConn(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.create_connection((pinned_ip, self.port),
+                                                 self.timeout)
+
+    class _HTTPSConn(http.client.HTTPSConnection):
+        def connect(self):
+            sock = socket.create_connection((pinned_ip, self.port), self.timeout)
+            self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+    class _HTTPHandler(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(_HTTPConn, req)
+
+    class _HTTPSHandler(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(_HTTPSConn, req)
+
+    return urllib.request.build_opener(_HTTPHandler, _HTTPSHandler).open
 
 
 # -- HTML -> text ----------------------------------------------------------
@@ -97,9 +180,15 @@ def html_to_text(html: str):
 # -- fetch -----------------------------------------------------------------
 
 def fetch_url(url, timeout=DEFAULT_TIMEOUT, max_bytes=DEFAULT_MAX_BYTES,
-              urlopen=None):
+              urlopen=None, allow_private=None, resolver=None):
     """Fetch `url` and return a dict with readable text. Network access goes
     through `urlopen` (defaults to urllib) so tests can inject a fake.
+
+    SSRF guard (issue #44): unless a fake `urlopen` is injected, the host is
+    resolved and refused if it maps to a private/loopback/link-local/reserved
+    address; the connection is then pinned to a validated IP to defeat DNS
+    rebinding. Set allow_private=True (or AGORA_FETCH_ALLOW_PRIVATE=1) for
+    trusted intranets.
 
     Returns: {url, final_url, status, content_type, title, text, bytes,
               truncated} or {url, error} on failure."""
@@ -107,6 +196,23 @@ def fetch_url(url, timeout=DEFAULT_TIMEOUT, max_bytes=DEFAULT_MAX_BYTES,
     if parsed.scheme not in ALLOWED_SCHEMES:
         return {"url": url, "error": f"unsupported scheme '{parsed.scheme}' "
                 f"(only {'/'.join(ALLOWED_SCHEMES)} allowed)"}
+
+    if allow_private is None:
+        allow_private = _allow_private_default()
+
+    # Guard only the real network path. When a fake `urlopen` is injected (tests)
+    # there is no real socket, so validation is unnecessary — but if a `resolver`
+    # is supplied we still validate, so the guard itself stays testable.
+    if urlopen is None or resolver is not None:
+        try:
+            ips = validate_host(parsed.hostname, allow_private=allow_private,
+                                resolver=resolver)
+        except SSRFBlocked as e:
+            return {"url": url, "error": f"blocked (SSRF guard): {e}"}
+        if urlopen is None and not allow_private:
+            # pin the connection to a validated public IP (anti-rebinding)
+            urlopen = _pinned_opener(ips[0])
+
     if urlopen is None:
         urlopen = urllib.request.urlopen
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
