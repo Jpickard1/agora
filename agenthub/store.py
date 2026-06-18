@@ -146,6 +146,7 @@ class Message:
     author_kind: str = "agent"  # agent | human | system
     channel: str | None = None  # set for channel messages
     to: str | None = None       # set for directed messages (inbox)
+    reply_to: str | None = None  # parent message id, for threaded replies (#64)
     host: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
 
@@ -240,13 +241,15 @@ class HubStore:
 
     def post_channel(self, channel: str, text: str, author: str,
                      author_name: str, author_kind: str = "agent",
-                     host: str = "", meta: dict | None = None) -> Message:
+                     host: str = "", meta: dict | None = None,
+                     reply_to: str | None = None) -> Message:
         name = self.ensure_channel(channel)
         ts = _now()
         msg = Message(
             id=uuid.uuid4().hex, ts=ts, text=text, author=author,
             author_name=author_name, author_kind=author_kind,
             channel=name, host=host, meta=meta or {},
+            reply_to=reply_to or None,
         )
         path = self.channels_dir / name / "messages" / _msg_filename(ts)
         _atomic_write_json(path, msg.to_dict())
@@ -254,7 +257,8 @@ class HubStore:
 
     def post_inbox(self, to_agent: str, text: str, author: str,
                    author_name: str, author_kind: str = "human",
-                   host: str = "", meta: dict | None = None) -> Message:
+                   host: str = "", meta: dict | None = None,
+                   reply_to: str | None = None) -> Message:
         """Send a directed message (instruction/DM) to a specific agent."""
         to_id = _safe_name(to_agent)
         ts = _now()
@@ -262,6 +266,7 @@ class HubStore:
             id=uuid.uuid4().hex, ts=ts, text=text, author=author,
             author_name=author_name, author_kind=author_kind,
             to=to_id, host=host, meta=meta or {},
+            reply_to=reply_to or None,
         )
         path = self.inbox_dir / to_id / _msg_filename(ts)
         _atomic_write_json(path, msg.to_dict())
@@ -346,6 +351,16 @@ class HubStore:
         name = _safe_name(channel)
         return self._read_dir_messages(
             self.channels_dir / name / "messages", since_ts, limit)
+
+    def read_thread(self, channel: str, parent_id: str) -> dict[str, Any]:
+        """A thread (issue #64): the parent message plus its direct replies
+        (messages whose reply_to == parent_id), chronological. parent is None if
+        the id isn't in this channel."""
+        msgs = self.read_channel(channel)
+        parent = next((m for m in msgs if m.get("id") == parent_id), None)
+        replies = sorted((m for m in msgs if m.get("reply_to") == parent_id),
+                         key=lambda m: m.get("ts", 0))
+        return {"parent": parent, "replies": replies}
 
     def read_inbox(self, agent_id: str, since_ts: float = 0.0,
                    limit: int | None = None) -> list[dict[str, Any]]:
