@@ -334,6 +334,28 @@ class HubStore:
         merged.sort(key=lambda m: m["ts"])
         return merged[-limit:] if limit else merged
 
+    def comm_graph(self, since_ts: float = 0.0) -> dict[str, Any]:
+        """Directed communication graph derived from directed messages: for each
+        inbox, edges are author -> recipient with a message count. Shows which
+        agents are actually talking to one another (self-messages excluded)."""
+        edges: dict[tuple[str, str], int] = {}
+        if self.inbox_dir.exists():
+            for idir in self.inbox_dir.iterdir():
+                if not idir.is_dir():
+                    continue
+                dst = idir.name
+                for m in self._read_dir_messages(idir, since_ts, None):
+                    src = m.get("author") or m.get("author_name") or "?"
+                    if src == dst:
+                        continue
+                    edges[(src, dst)] = edges.get((src, dst), 0) + 1
+        nodes = sorted({n for pair in edges for n in pair})
+        return {
+            "nodes": nodes,
+            "edges": [{"source": s, "target": d, "count": c}
+                      for (s, d), c in sorted(edges.items())],
+        }
+
     # -- retention / rotation ---------------------------------------------
 
     def _prune_dir(self, msg_dir: Path, archive_path: Path,

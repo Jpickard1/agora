@@ -193,6 +193,12 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.usage_stats(online_window=window)
 
+    # -- agent communication graph (issue #5) ---------------------------
+    @app.get("/api/graph")
+    def graph(x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        return store.comm_graph()
+
     @app.get("/api/agents/{agent_id}/inbox")
     def agent_inbox(agent_id: str, since: float = 0.0, limit: int = 200,
                     x_hub_token: str | None = Header(default=None)):
