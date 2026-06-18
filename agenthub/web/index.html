@@ -45,6 +45,8 @@
       </header>
       <div id="messages" class="messages"></div>
       <form id="composer" class="composer">
+        <input type="file" id="file-input" accept="image/*" hidden />
+        <button type="button" id="attach-btn" title="Attach an image">📎</button>
         <textarea id="msg-input" rows="1" placeholder="Message…  (Enter to send · Shift+Enter for a new line)"></textarea>
         <button type="submit">Send</button>
       </form>

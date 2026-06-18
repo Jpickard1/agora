@@ -99,7 +99,13 @@ html, body { height: 100%; overflow: hidden; }
   resize: vertical;        /* but you can drag it taller/shorter if you want */
   overflow-y: auto;        /* long / multi-line text just scrolls inside */
 }
-.composer button { padding: 0 18px; height: 42px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; flex: none; }
+.composer button[type="submit"] { padding: 0 18px; height: 42px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; flex: none; }
+.composer #attach-btn { height: 42px; width: 42px; padding: 0; border: 0; border-radius: 8px; background: var(--bg3); color: var(--text); font-size: 18px; cursor: pointer; flex: none; }
+.composer #attach-btn:hover { background: #3a4150; }
 .composer.instruct textarea { outline: 2px solid var(--human); }
+
+/* inline image attachments in messages */
+.msg-img { display: block; margin-top: 6px; max-width: 360px; max-height: 360px;
+  border-radius: 8px; cursor: pointer; border: 1px solid var(--border); }
 
 .empty { color: var(--muted); text-align: center; margin-top: 40px; }

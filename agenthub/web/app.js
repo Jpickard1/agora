@@ -231,6 +231,9 @@ function appendMessage(m, scroll = true) {
   const kind = m.author_kind || "agent";
   const avatar = kind === "human" ? "🧑" : kind === "system" ? "⚙️" : "🤖";
   const directed = m.to ? "directed" : "";
+  const img = m.meta && m.meta.image
+    ? `<img class="msg-img" src="${esc(m.meta.image)}" alt="${esc((m.meta && m.meta.filename) || "image")}" onclick="window.open(this.src,'_blank')" />`
+    : "";
   const el = document.createElement("div");
   el.className = "msg " + directed;
   el.innerHTML = `
@@ -242,6 +245,7 @@ function appendMessage(m, scroll = true) {
         <span class="time">${fmtTime(m.ts)}</span>
       </div>
       <div class="text">${esc(m.text)}</div>
+      ${img}
     </div>`;
   box.appendChild(el);
   if (scroll) scrollDown();
@@ -281,6 +285,50 @@ $("#composer").addEventListener("submit", async (e) => {
     }
   } catch (err) {
     msgInput.value = text;    // restore on failure
+  }
+});
+
+/* ---------------- image attachments ---------------- */
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);          // a data: URL
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+async function postMessage(body) {
+  if (state.view.type === "channel") {
+    return api(`/api/channels/${encodeURIComponent(state.view.id)}/messages`, { method: "POST", body });
+  } else if (state.view.type === "agent") {
+    return api(`/api/agents/${encodeURIComponent(state.view.id)}/inbox`, { method: "POST", body });
+  } else if (state.view.type === "broadcast") {
+    return api(`/api/broadcast`, { method: "POST", body });
+  }
+}
+
+$("#attach-btn").onclick = () => $("#file-input").click();
+
+$("#file-input").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = "";                            // allow re-selecting the same file
+  if (state.view.type === "firehose") return;     // read-only view
+  try {
+    const dataUrl = await fileToBase64(file);
+    const up = await api("/api/upload", { method: "POST",
+      body: JSON.stringify({ filename: file.name, data_base64: dataUrl }) });
+    const caption = msgInput.value.trim();
+    msgInput.value = "";
+    const body = JSON.stringify({
+      text: caption || "📷 [image]", author_name: state.name,
+      meta: { image: up.url, filename: file.name },
+    });
+    const m = await postMessage(body);
+    if (m && m.id) appendMessage(m);
+  } catch (err) {
+    alert("Image upload failed: " + err.message);
   }
 });
 

@@ -126,15 +126,16 @@ def create_app(root: str | Path) -> FastAPI:
                      x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
         text = (payload.get("text") or "").strip()
-        if not text:
-            raise HTTPException(400, "text required")
+        meta = payload.get("meta") or {}
+        if not text and not meta.get("image"):
+            raise HTTPException(400, "text or image required")
         name = payload.get("author_name") or "human"
         m = store.post_channel(
             channel, text,
             author=payload.get("author") or f"human:{name}",
             author_name=name,
             author_kind=payload.get("author_kind", "human"),
-            host=payload.get("host", "web"))
+            host=payload.get("host", "web"), meta=meta)
         return m.to_dict()
 
     # -- firehose: all activity merged -----------------------------------
@@ -191,16 +192,41 @@ def create_app(root: str | Path) -> FastAPI:
                          x_hub_token: str | None = Header(default=None)):
         check_token(x_hub_token)
         text = (payload.get("text") or "").strip()
-        if not text:
-            raise HTTPException(400, "text required")
+        meta = payload.get("meta") or {}
+        if not text and not meta.get("image"):
+            raise HTTPException(400, "text or image required")
         name = payload.get("author_name") or "human"
         m = store.post_inbox(
             agent_id, text,
             author=payload.get("author") or f"human:{name}",
             author_name=name,
             author_kind=payload.get("author_kind", "human"),
-            host=payload.get("host", "web"))
+            host=payload.get("host", "web"), meta=meta)
         return m.to_dict()
+
+    # -- image / file uploads --------------------------------------------
+    @app.post("/api/upload")
+    def upload(payload: dict = Body(...),
+               x_hub_token: str | None = Header(default=None)):
+        """Accept a base64-encoded file (no multipart dependency), store it in
+        the hub's uploads dir, and return its URL for use as a message image."""
+        check_token(x_hub_token)
+        import base64
+        b64 = payload.get("data_base64") or ""
+        if "," in b64 and b64.strip().startswith("data:"):
+            b64 = b64.split(",", 1)[1]   # strip a data: URL prefix if present
+        try:
+            raw = base64.b64decode(b64)
+        except Exception:
+            raise HTTPException(400, "invalid base64 data")
+        if not raw:
+            raise HTTPException(400, "empty upload")
+        if len(raw) > 25 * 1024 * 1024:
+            raise HTTPException(413, "file too large (max 25 MB)")
+        filename = payload.get("filename") or "file"
+        ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
+        url = store.save_upload(raw, ext)
+        return {"url": url, "filename": filename, "bytes": len(raw)}
 
     # -- live stream (SSE) -----------------------------------------------
     @app.get("/api/stream")
@@ -254,6 +280,10 @@ def create_app(root: str | Path) -> FastAPI:
 
     if WEB_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+    # Serve uploaded images/files (stored under HUB_ROOT/uploads, outside git).
+    store.uploads_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=str(store.uploads_dir)), name="uploads")
 
     return app
 

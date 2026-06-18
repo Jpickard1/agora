@@ -109,6 +109,7 @@ class HubStore:
         self.inbox_dir = self.root / "inbox"
         self.agents_dir = self.root / "agents"
         self.broadcast_dir = self.root / "broadcast"
+        self.uploads_dir = self.root / "uploads"
         self.config_path = self.root / "config.json"
 
     # -- lifecycle ---------------------------------------------------------
@@ -116,7 +117,7 @@ class HubStore:
     def init(self, token: str | None = None) -> dict[str, Any]:
         """Create the hub directory tree and config if missing. Idempotent."""
         for d in (self.channels_dir, self.inbox_dir, self.agents_dir,
-                  self.broadcast_dir):
+                  self.broadcast_dir, self.uploads_dir):
             d.mkdir(parents=True, exist_ok=True)
         cfg = self.get_config()
         if cfg is None:
@@ -235,6 +236,24 @@ class HubStore:
                     author_kind=author_kind, host=host,
                     meta={"capability": capability}))
         return sent
+
+    # -- uploads (image / file attachments) -------------------------------
+
+    def save_upload(self, data: bytes, ext: str) -> str:
+        """Save an uploaded file under HUB_ROOT/uploads and return its URL path
+        (/uploads/<name>). Attachments live with the rest of the hub data —
+        outside the git repo — so chat content is never committed."""
+        ext = "".join(c for c in (ext or "") if c.isalnum()).lower()[:8] or "bin"
+        name = f"{uuid.uuid4().hex}.{ext}"
+        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        path = self.uploads_dir / name
+        tmp = self.uploads_dir / f".{name}.{os.getpid()}.tmp"
+        with open(tmp, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        return f"/uploads/{name}"
 
     # -- reading -----------------------------------------------------------
 
