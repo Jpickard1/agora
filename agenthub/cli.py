@@ -757,6 +757,69 @@ def cmd_labels_init(args):
     return 1 if failed else 0
 
 
+# -- multi-repo task board (issue #123) ------------------------------------
+
+def cmd_board(args):
+    """Manage the multi-repo task board: list/add/remove the repos it pulls
+    issues from (runtime, persisted to config.json — no server restart), and
+    trigger an incremental sync."""
+    import os
+    store = _store(args)
+    action = args.action
+
+    if action == "list-repos":
+        repos = store.board_repos()
+        if not repos:
+            print("no board repos configured "
+                  "(add one: hubcli board add-repo owner/name, "
+                  "or set $AGORA_GH_REPO)")
+            return 0
+        print(f"task-board repos ({len(repos)}):")
+        for r in repos:
+            print(f"  • {r}")
+        return 0
+
+    if action in ("add-repo", "remove-repo"):
+        if not args.repo:
+            print(f"error: {action} needs owner/name", file=sys.stderr)
+            return 2
+        fn = store.add_board_repo if action == "add-repo" else store.remove_board_repo
+        result, repos = fn(args.repo)
+        msg = {
+            "added": f"✓ added {args.repo}",
+            "exists": f"• {args.repo} already on the board",
+            "invalid": f"✗ '{args.repo}' is not a valid owner/name slug",
+            "removed": f"✓ removed {args.repo}",
+            "missing": f"• {args.repo} was not on the board",
+        }[result]
+        print(msg)
+        print(f"  board repos now: {', '.join(repos) or '(none)'}")
+        return 2 if result == "invalid" else 0
+
+    if action == "sync":
+        from .boardsync import BoardSyncer
+        repos = store.board_repos()
+        if not repos:
+            print("no board repos configured — nothing to sync", file=sys.stderr)
+            return 1
+        if shutil.which("gh") is None:
+            print("error: the GitHub CLI ('gh') is required and was not found",
+                  file=sys.stderr)
+            return 2
+        syncer = BoardSyncer(os.path.join(str(store.root), "board_state.json"),
+                             repos=repos, sleep_between=args.sleep)
+        cards = syncer.sync()
+        from .boardsync import group_by_repo
+        groups = group_by_repo(cards)
+        print(f"✓ synced {len(repos)} repo(s), {len(cards)} cards:")
+        for r in repos:
+            print(f"  {r:30} {len(groups.get(r, []))} cards")
+        return 0
+
+    print(f"error: unknown board action {action!r}", file=sys.stderr)
+    return 2
+
+
 # -- tasks -----------------------------------------------------------------
 
 def _print_task(t: dict, verbose: bool = False) -> None:
@@ -1631,6 +1694,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Create the Agent Task form's labels in a GitHub repo (idempotent)")
     sp.add_argument("--repo", help="owner/name (defaults to $AGORA_GH_REPO)")
     sp.set_defaults(func=cmd_labels_init)
+
+    # multi-repo task board (issue #123): which repos the board pulls issues from
+    sp = sub.add_parser("board",
+                        help="Multi-repo task board: manage source repos + sync (#123)")
+    sp.add_argument("action",
+                    choices=["list-repos", "add-repo", "remove-repo", "sync"],
+                    help="list-repos | add-repo owner/name | remove-repo owner/name | sync")
+    sp.add_argument("repo", nargs="?", help="owner/name (for add-repo/remove-repo)")
+    sp.add_argument("--sleep", type=float, default=0.0,
+                    help="seconds to pause between repos during sync (spread API bursts)")
+    sp.set_defaults(func=cmd_board)
 
     # tasks: durable work dispatch (manager creates, workers claim/update)
     sp = sub.add_parser("task", help="Durable work tasks (new/claim/update/list/show)")

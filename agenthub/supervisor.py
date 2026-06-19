@@ -286,6 +286,22 @@ def main(argv=None):
           f"{'on, every ' + str(int(su_interval)) + 's' if su_enabled else 'off'}",
           flush=True)
 
+    # Multi-repo task-board sync (issue #123): periodically pull issues from the
+    # configured repos (config.json task_board.repos; falls back to $AGORA_GH_REPO)
+    # into the board snapshot the UI/API serve. ON whenever any repo is configured
+    # and `gh` is available; re-reads the repo list each cycle so runtime
+    # add/remove (hubcli board add-repo/remove-repo) takes effect with no restart.
+    from .boardsync import BoardSyncer
+    board_interval = float(((store.get_config() or {}).get("task_board") or {})
+                           .get("interval_sec") or 300)
+    board_enabled = bool(store.board_repos()) and bool(shutil.which("gh"))
+    board_syncer = BoardSyncer(os.path.join(root, "board_state.json"),
+                               repos=store.board_repos())
+    last_board_sync = 0.0  # sync once promptly on the first loop
+    print(f"[supervisor] task-board sync: "
+          f"{('on, every ' + str(int(board_interval)) + 's, repos=' + ','.join(store.board_repos())) if board_enabled else 'off (no repos / no gh)'}",
+          flush=True)
+
     serve_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli serve "
                  f"--host 127.0.0.1 --port {args.port} > {root}/server.log 2>&1")
     bridge_cmd = (f"AGENT_HUB_ROOT={root} {PYBIN} -m agenthub.cli listen "
@@ -447,6 +463,22 @@ def main(argv=None):
             synced = syncer.tick()
             for tid in synced:
                 print(f"[supervisor] synced task {tid} to GitHub", flush=True)
+
+            # Multi-repo board sync (issue #123): refresh the board snapshot on
+            # a schedule, re-reading the repo list so runtime add/remove applies
+            # without a restart. Re-checks gh + repos each cycle (zero-cost when
+            # none configured).
+            if should_tick(now, last_board_sync, board_interval):
+                last_board_sync = now
+                repos = store.board_repos()
+                if repos and shutil.which("gh"):
+                    try:
+                        board_syncer.set_repos(repos)
+                        cards = board_syncer.sync()
+                        print(f"[supervisor] board sync: {len(repos)} repo(s), "
+                              f"{len(cards)} cards", flush=True)
+                    except Exception as e:  # never let board sync wedge the loop
+                        print(f"[supervisor] board sync error: {e}", flush=True)
 
             # Optional self-update (issue #69): pull+apply latest Agora on a
             # schedule so pushed changes reach this install. Off unless enabled.
