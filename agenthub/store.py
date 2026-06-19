@@ -229,6 +229,49 @@ class HubStore:
         cfg = self.get_config()
         return cfg.get("token") if cfg else None
 
+    # -- task-board repos (issue #123: multi-repo board) -------------------
+    # The board pulls issues from a LIST of repos (config.json
+    # `task_board.repos`); falls back to the single $AGORA_GH_REPO for
+    # single-repo back-compat. Mutations persist to config.json so a repo can
+    # be added/removed at runtime (picked up on the next board sync, no restart).
+    def board_repos(self) -> list[str]:
+        from .boardsync import normalize_repos
+        cfg = self.get_config() or {}
+        cfg_repos = (cfg.get("task_board") or {}).get("repos")
+        return normalize_repos(cfg_repos, env_repo=os.environ.get("AGORA_GH_REPO"))
+
+    def _write_board_repos(self, repos: list[str]) -> None:
+        cfg = self.get_config() or {}
+        tb = dict(cfg.get("task_board") or {})
+        tb["repos"] = repos
+        cfg["task_board"] = tb
+        _atomic_write_json(self.config_path, cfg)
+
+    def add_board_repo(self, slug: str) -> tuple[str, list[str]]:
+        """Add a repo to the board at runtime. Returns (action, repos) where
+        action in {added, exists, invalid}."""
+        from .boardsync import valid_slug
+        slug = (slug or "").strip()
+        repos = self.board_repos()
+        if not valid_slug(slug):
+            return ("invalid", repos)
+        if slug in repos:
+            return ("exists", repos)
+        repos = repos + [slug]
+        self._write_board_repos(repos)
+        return ("added", repos)
+
+    def remove_board_repo(self, slug: str) -> tuple[str, list[str]]:
+        """Remove a repo from the board at runtime. Returns (action, repos)
+        where action in {removed, missing}."""
+        slug = (slug or "").strip()
+        repos = self.board_repos()
+        if slug not in repos:
+            return ("missing", repos)
+        repos = [r for r in repos if r != slug]
+        self._write_board_repos(repos)
+        return ("removed", repos)
+
     # -- channels (two-store: private + shared, issue #14) -----------------
     # PUBLIC channels live in the SHARED store (a group-accessible root the whole
     # ewsc_users group can reach); PRIVATE channels stay in this per-user private

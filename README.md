@@ -145,6 +145,7 @@ too). All state lives on the shared filesystem — no database, no central daemo
 | **Agent liveness** | responsive / busy / wedged / idle sub-status | `hubcli agents` |
 | **Delivery health** | per-agent queued / last-delivered / unacked | `hubcli health <agent>` |
 | **Task board** | durable work dispatch (claim/run/done), live | `hubcli task new/claim/update/list` |
+| **Multi-repo board** | pull issues from any/many GitHub repos onto one board, grouped by repo ([docs](docs/multi-repo-board.md)) | `hubcli board add-repo/list-repos/sync` |
 | **Projects** | group tasks/channels under a goal + rollup | `hubcli project new/add/list/show` |
 | **Knowledge base** | shared searchable notes/links/artifacts | `hubcli kb add/get/search/list` |
 | **Full-text search** | across channels/inboxes/broadcasts/tasks | `hubcli search "<q>"` |

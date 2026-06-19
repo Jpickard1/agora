@@ -275,6 +275,28 @@ def create_app(root: str | Path) -> FastAPI:
         check_token(x_hub_token)
         return store.list_tasks(status=status)
 
+    # -- multi-repo GitHub board (issue #123) ----------------------------
+    # Serves the persisted board snapshot (issues pulled from task_board.repos
+    # by the supervisor's periodic BoardSyncer) — grouped + color-coded by repo,
+    # filterable by ?repo= and ?state=. Read-only: no live `gh` call per request.
+    @app.get("/api/board")
+    def board(repo: str | None = None, state: str | None = None,
+              x_hub_token: str | None = Header(default=None)):
+        check_token(x_hub_token)
+        import os
+        from .boardsync import BoardSyncer, group_by_repo, repo_color
+        repos = store.board_repos()
+        syncer = BoardSyncer(os.path.join(str(store.root), "board_state.json"),
+                             repos=repos)
+        cards = syncer.cards(repo=repo, state=state)
+        return {
+            "repos": repos,
+            "colors": {r: repo_color(r, repos) for r in repos},
+            "count": len(cards),
+            "cards": cards,
+            "groups": group_by_repo(cards),
+        }
+
     # -- research pipeline (issue #24) ----------------------------------
     @app.post("/api/research")
     def research_run(payload: dict = Body(...),
